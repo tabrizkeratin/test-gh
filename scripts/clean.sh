@@ -112,6 +112,8 @@ if [ "$LOCAL_ONLY" = true ] || [ "$CONFIRM" = true ]; then
   git checkout "$DEFAULT_BRANCH" 2>/dev/null || true
   # Clean untracked/ignored files but keep .env
   git clean -fdx -e .env
+  git reflog expire --expire=now --all
+  git gc --prune=now --aggressive
   echo "Local repository cleaned."
 fi
 
