@@ -1,53 +1,45 @@
-name: Clean downloads from history
+name: Clean Downloads History
 
 on:
-  push:
-    branches:
-      - "**"
-
-concurrency:
-  group: clean-${{ github.ref }}
-  cancel-in-progress: false
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (show what would be removed)"
+        required: false
+        type: boolean
+        default: true
+      confirm:
+        description: 'Type "YES" to really rewrite history'
+        required: false
+        type: string
+        default: ""
 
 jobs:
-  purge-downloads:
-    if: ${{ contains(github.event.head_commit.message, 'clean-downloads:') }}
+  clean:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write # required for force‑push
-
+    if: ${{ inputs.confirm == 'YES' || inputs.dry_run == true }}
     steps:
-      - name: Checkout full history
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # fetch all commits
-          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
       - name: Install git-filter-repo
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y git-filter-repo
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq git-filter-repo
 
-      - name: Purge downloads/ from all commits
+      - name: Dry run or execute
         run: |
-          set -euo pipefail
-          echo "🧹 Removing downloads/ from history..."
-          git filter-repo --path downloads/ --invert-paths --force
-
-      - name: Force‑push cleaned history
-        env:
-          TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo "🚀 Force‑pushing cleaned branch ${GITHUB_REF_NAME}"
-
-          # Recreate origin remote (works whether it exists or not)
-          if git remote get-url origin >/dev/null 2>&1; then
-            git remote set-url origin "https://x-access-token:${TOKEN}@github.com/${{ github.repository }}.git"
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "=== DRY RUN ==="
+            git filter-repo --path downloads/ --invert-paths --dry-run
+            echo "=== END DRY RUN ==="
+            echo "To really remove, dispatch with confirm='YES' and dry_run=false"
           else
-            git remote add origin "https://x-access-token:${TOKEN}@github.com/${{ github.repository }}.git"
+            echo "=== EXECUTING CLEAN ==="
+            git filter-repo --path downloads/ --invert-paths --force
+            echo "Force pushing rewritten history..."
+            git push --force --all
+            git push --force --tags
+            echo "=== CLEAN COMPLETE ==="
+            echo "All collaborators must run: git fetch --prune && git reset --hard origin/main"
           fi
-
-          # Verify the remote is correctly set
-          git remote -v
-
-          git push origin --force HEAD:${GITHUB_REF_NAME}

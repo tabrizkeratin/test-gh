@@ -1,0 +1,165 @@
+name: Download URLs
+
+on:
+  workflow_dispatch:
+    inputs:
+      download_token:
+        description: "Secret token required to download"
+        required: true
+      urls:
+        description: "URLs to download (one per line)"
+        required: true
+        type: string
+      mode:
+        description: "download or download-zip"
+        required: true
+        type: choice
+        options:
+          - download
+          - download-zip
+        default: "download"
+      split_size_mb:
+        description: "Split files larger than this size (MB)"
+        required: false
+        type: number
+        default: 90
+      allowed_domains:
+        description: "Comma-separated allowed domains (* for all)"
+        required: false
+        type: string
+        default: ""
+      commit_message:
+        description: "Custom commit message"
+        required: false
+        type: string
+        default: "chore: download files"
+
+env:
+  DOWNLOADS_DIR: downloads
+
+jobs:
+  # Validate the download token early
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check token
+        run: |
+          if [ "${{ inputs.download_token }}" != "${{ secrets.DOWNLOAD_TOKEN }}" ]; then
+            echo "Invalid download token."
+            exit 1
+          fi
+
+  # Parse URLs into a matrix
+  setup-matrix:
+    needs: validate
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.parse.outputs.matrix }}
+    steps:
+      - name: Parse URLs
+        id: parse
+        run: |
+          INPUT="${{ inputs.urls }}"
+          URLS=$(echo "$INPUT" | sed '/^$/d' | jq -R -s -c 'split("\n")[:-1]')
+          echo "matrix=$URLS" >> $GITHUB_OUTPUT
+
+  # Download each URL in parallel, upload artifact
+  download:
+    needs: [validate, setup-matrix]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        url: ${{ fromJson(needs.setup-matrix.outputs.matrix) }}
+    steps:
+      - name: Install aria2
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq aria2
+
+      - name: Validate domain
+        run: |
+          DOMAIN=$(echo "${{ matrix.url }}" | awk -F/ '{print $3}')
+          ALLOWED="${{ inputs.allowed_domains }}"
+          if [ "$ALLOWED" = "*" ]; then exit 0; fi
+          if [ -z "$ALLOWED" ]; then echo "No allowlist."; exit 1; fi
+          IFS=',' read -ra AD_ARR <<< "$ALLOWED"
+          FOUND=false
+          for AD in "${AD_ARR[@]}"; do
+            AD_CLEAN=$(echo "$AD" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            if [[ "$DOMAIN" == "$AD_CLEAN" ]]; then FOUND=true; break; fi
+          done
+          if ! $FOUND; then echo "Domain '$DOMAIN' not allowed."; exit 1; fi
+
+      - name: Download with retry
+        run: |
+          URL="${{ matrix.url }}"
+          FILENAME=$(basename "$URL" | cut -d'?' -f1)
+          mkdir -p download_staging
+          for i in $(seq 1 3); do
+            echo "Attempt $i"
+            if aria2c -x 4 -s 4 --dir=download_staging --out="$FILENAME" "$URL"; then
+              echo "Download success"
+              break
+            fi
+            sleep 5
+            if [ $i -eq 3 ]; then echo "All attempts failed"; exit 1; fi
+          done
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: download-${{ strategy.job-index }}
+          path: download_staging/*
+          retention-days: 1
+
+  # Combine all downloaded files, split large ones, create zip if needed, commit
+  finalize:
+    needs: download
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Pull latest (in case other pushes happened)
+        run: git pull origin main
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: staging
+
+      - name: Assemble downloads
+        run: |
+          mkdir -p ${{ env.DOWNLOADS_DIR }}
+          # Flatten all artifact contents into downloads/
+          find staging -type f -exec mv {} ${{ env.DOWNLOADS_DIR }}/ \;
+          rm -rf staging
+
+      - name: Create zip (if download-zip mode)
+        if: ${{ inputs.mode == 'download-zip' }}
+        run: |
+          cd ${{ env.DOWNLOADS_DIR }}
+          zip -r ../all-files.zip .
+          cd .. && rm -rf ${{ env.DOWNLOADS_DIR }}
+          mkdir -p ${{ env.DOWNLOADS_DIR }}
+          mv all-files.zip ${{ env.DOWNLOADS_DIR }}/
+
+      - name: Split large files
+        run: |
+          SPLIT_MB=${{ inputs.split_size_mb }}
+          cd ${{ env.DOWNLOADS_DIR }}
+          find . -type f -size +"${SPLIT_MB}M" -exec sh -c '
+            echo "Splitting $1 (${2}MB parts)..."
+            split -b "${2}M" "$1" "$1.part_"
+            rm "$1"
+          ' _ {} "$SPLIT_MB" \;
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add ${{ env.DOWNLOADS_DIR }}/
+          git commit -m "${{ inputs.commit_message }}" || echo "Nothing to commit"
+          git push origin HEAD:main

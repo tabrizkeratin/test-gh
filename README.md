@@ -1,130 +1,150 @@
-# 💾 Download & Clean Workflows
+# test-gh
 
-This repository contains two GitHub Actions workflows for managing large binary files:
+Download files from the web directly into your repository using a single command,
+with domain allowlisting, token protection, automatic splitting of large files,
+and optional bundling into a ZIP archive.
 
-1. **Download from Commit & Save to Repo** – automatically downloads files from URLs in a commit message and stores them in the `downloads/` folder.
-2. **Clean downloads from history** – completely purges the `downloads/` directory from the entire Git history and object storage, triggered by a special commit message.
+## Features
 
----
+- 🚀 **Dispatch via CLI** – no more editing commit messages. Run `./scripts/download.sh`
+- 🔒 **Token protection** – only requests containing the correct `DOWNLOAD_TOKEN` succeed
+- 🌍 **Domain allowlisting** – restrict which domains can be downloaded (or use `*` for all)
+- 📦 **Auto ZIP** – multiple URLs are automatically bundled into `all-files.zip`
+- ✂️ **Large file splitting** – files exceeding a size threshold are split into parts
+- 🔁 **Retry logic** – network hiccups are handled gracefully
+- 🧹 **History cleaner** – remove all `downloads/` from Git history when needed
+- ⚙️ **Configurable** – all settings via `.env` file or command-line flags
 
-## 📥 Download Workflow
+## Quick Start
 
-### Trigger
+1. **Clone the repo**
 
-Push **any commit** containing the keyword `download:` or `download-zip:` in the commit message.
+   ```bash
+   git clone https://github.com/tabrizkeratin/test-gh.git
+   cd test-gh
+   ```
 
-### Commit message format
+2. **Set up environment**
 
-```
-download: https://example.com/file1.bin https://example.com/file2.bin
-```
+   ```bash
+   cp .env.example .env
+   # Edit .env with your preferences (especially DOWNLOAD_TOKEN and ALLOWED_DOMAINS)
+   ```
 
-or
+3. **Add the GitHub secret**
+   - Go to **Settings > Secrets and variables > Actions**
+   - Add a secret named `DOWNLOAD_TOKEN` with the same value as in your `.env`
 
-```
-download-zip: https://example.com/data.iso https://example.com/backup.tar
-```
+4. **Make scripts executable**
 
-- Place the URLs on the same line as the keyword, or on subsequent non‑empty lines.
-- `download-zip:` creates a single timestamped ZIP archive of all downloaded files.
+   ```bash
+   chmod +x scripts/*.sh
+   ```
 
-### What happens
+5. **Download something**
 
-- The workflow fetches the files (only from allowed domains, configurable via repository variable `ALLOWED_DOMAINS`).
-- Files are placed in the `downloads/` directory.
-- If a file exceeds 90 MB, it is automatically split into 90 MB chunks (using `.zip` split format).
-- A new commit with message `Add downloaded files from commit [skip ci]` is pushed to the same branch.
-- The `[skip ci]` tag prevents the workflow from re‑running on its own commit.
+   ```bash
+   ./scripts/download.sh https://example.com/file.bin
+   ```
 
-### Skipping a run
+## Usage
 
-Include `[skip ci]` anywhere in the commit message to prevent the workflow from starting.
-
-### 🔹 URL list syntax
-
-Separate URLs with **spaces**, **commas**, or **newlines**.  
-You may also wrap URLs in **single or double quotes** (useful if a URL contains spaces).
-
-Valid examples:
-
----
-
-## 🧹 Clean Workflow
-
-### Trigger
-
-Push **any commit** containing `clean-downloads:` in the commit message.
-
-### Commit message example
-
-```
-clean-downloads: remove all downloaded files
-```
-
-### What happens
-
-1. The entire **commit history** is rewritten – every commit that ever touched the `downloads/` directory will have that directory completely removed.
-2. The branch is force‑pushed with the cleaned history.
-3. GitHub will eventually run garbage collection, freeing up the object storage space.
-
-> ⚠️ **Warning:** This operation **rewrites history**. All existing commit SHAs change.  
-> Every collaborator must **rebase their work** or **re‑clone** the repository after the cleanup.  
-> Protected branches may block force‑pushing – you may need to disable branch protection temporarily or use a Personal Access Token.
-
-### Safeguard (optional)
-
-If you want an extra confirmation word to avoid accidental runs, change the workflow’s `if` condition to require both `clean-downloads:` and `confirm` in the commit message.
-
----
-
-## 📊 Repository Variables
-
-| Variable | Purpose | Default |
-|----------|---------|---------|
-| `ALLOWED_DOMAINS` | Regex to whitelist download hosts | `.*` (all domains) |
-
-Set these under **Settings > Secrets and variables > Actions > Variables**.
-
----
-
-## ⚡ Quick Examples
-
-**Download a file**
+### Downloading files
 
 ```bash
-git commit --allow-empty -m "download: https://releases.ubuntu.com/22.04/ubuntu-22.04.4-desktop-amd64.iso"
-git push
+# Single file
+./scripts/download.sh https://cdn.example.com/archive.tar.gz
+
+# Multiple files (auto ZIP)
+./scripts/download.sh https://cdn.example.com/a.bin https://cdn.example.com/b.bin
+
+# All input styles supported
+./scripts/download.sh "https://example.com/1, https://example.com/2"
+./scripts/download.sh https://example.com/1,https://example.com/2
 ```
 
-**Download and zip multiple files**
+**Options:**
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--mode download|download-zip` | Override auto‑detected mode | `download` (single) / `download-zip` (multiple) |
+| `--split-size-mb N` | Split files larger than N MB | `90` |
+| `--allowed-domains d1,d2` | Allowed domains (overrides `.env`) | from `.env` |
+| `--commit-message "msg"` | Custom commit message | `chore: download files` |
+| `--token TOKEN` | Provide download token (overrides `.env`) | from `.env` |
+
+### Cleaning download history
+
+Remove all traces of `downloads/` from the repository history.
 
 ```bash
-git commit --allow-empty -m "download-zip: https://example.com/a.zip https://example.com/b.zip"
-git push
+# Dry run – see what would be deleted
+./scripts/clean.sh --dry-run
+
+# Actually clean remote history (requires confirmation)
+./scripts/clean.sh --confirm
+
+# After remote clean, reset your local repo
+./scripts/clean.sh --local-only
 ```
 
-**Clean all downloaded files from history**
+## Configuration
+
+All persistent settings are stored in a `.env` file. Copy `.env.example` to `.env` and adjust:
+
+```env
+# Required
+ALLOWED_DOMAINS=example.com,cdn.example.org   # or * for all
+DOWNLOAD_TOKEN=your-secret-token-here
+
+# Optional
+SPLIT_SIZE=90
+COMMIT_MSG=chore: download files
+MODE=download   # leave empty for auto‑detect
+```
+
+The script loads `.env` from:  
+
+1. The same directory as `download.sh`  
+2. The current working directory
+
+Command‑line flags always override `.env` values.
+
+## How It Works
+
+1. `scripts/download.sh` parses your URLs and dispatches a GitHub Actions workflow.
+2. The workflow **validates** your token against the repository secret.
+3. Each URL is downloaded **in parallel** using `aria2c`.
+4. Downloaded files are uploaded as artifacts, then **combined** in a final job.
+5. If you chose `download-zip`, all files are packed into `all-files.zip`.
+6. Files larger than `SPLIT_SIZE` are automatically split into `.part_*` chunks.
+7. Everything is committed and pushed to the `downloads/` directory.
+
+## Security
+
+- The `DOWNLOAD_TOKEN` ensures only those with the secret can trigger downloads.
+- Domain allowlisting prevents accidental downloads from untrusted hosts.
+- Use `ALLOWED_DOMAINS=*` only if you accept all domains.
+
+## Requirements
+
+- [GitHub CLI](https://cli.github.com/) installed and authenticated (`gh auth login`)
+- The repository has Actions enabled
+- A `DOWNLOAD_TOKEN` secret set in repository settings
+
+## Testing
+
+Run the URL parser test (no network calls):
 
 ```bash
-git commit --allow-empty -m "clean-downloads: free up space"
-git push
+./scripts/test_download.sh
 ```
 
-After the clean run, your repository will no longer contain the `downloads/` directory in any commit.
+## Contributing
 
----
+Pull requests are welcome. Please keep the scripts POSIX‑compatible where possible,
+and ensure all workflows remain idempotent.
 
-## ⚙️ Local Installation of `git-filter-repo`
+## License
 
-The clean workflow uses `git-filter-repo` automatically. If you ever need to run the cleanup locally, install it first:
-
-```bash
-# Ubuntu / Debian
-sudo apt install git-filter-repo
-
-# macOS
-brew install git-filter-repo
-```
-
-```
-
+MIT – use it, share it, modify it.
