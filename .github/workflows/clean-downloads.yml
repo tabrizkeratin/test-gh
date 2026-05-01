@@ -1,0 +1,53 @@
+name: Clean downloads from history
+
+on:
+  push:
+    branches:
+      - "**"
+
+concurrency:
+  group: clean-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  purge-downloads:
+    if: ${{ contains(github.event.head_commit.message, 'clean-downloads:') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # required for force‑push
+
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # fetch all commits
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install git-filter-repo
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y git-filter-repo
+
+      - name: Purge downloads/ from all commits
+        run: |
+          set -euo pipefail
+          echo "🧹 Removing downloads/ from history..."
+          git filter-repo --path downloads/ --invert-paths --force
+
+      - name: Force‑push cleaned history
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "🚀 Force‑pushing cleaned branch ${GITHUB_REF_NAME}"
+
+          # Recreate origin remote (works whether it exists or not)
+          if git remote get-url origin >/dev/null 2>&1; then
+            git remote set-url origin "https://x-access-token:${TOKEN}@github.com/${{ github.repository }}.git"
+          else
+            git remote add origin "https://x-access-token:${TOKEN}@github.com/${{ github.repository }}.git"
+          fi
+
+          # Verify the remote is correctly set
+          git remote -v
+
+          git push origin --force HEAD:${GITHUB_REF_NAME}
