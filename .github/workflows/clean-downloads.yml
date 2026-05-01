@@ -37,6 +37,8 @@ jobs:
           else
             echo "=== EXECUTING CLEAN ==="
             git filter-repo --path downloads/ --invert-paths --force
+            # filter-repo removes the remote; add it back
+            git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
             echo "Force pushing rewritten history..."
             git push --force --all
             git push --force --tags
