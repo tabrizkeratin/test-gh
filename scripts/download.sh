@@ -145,4 +145,11 @@ gh workflow run download-url.yml \
   -f commit_message="$COMMIT_MSG" \
   --ref main
 
-echo "Workflow dispatched. See: https://github.com/$GITHUB_REPOSITORY/actions"
+echo "Workflow dispatched. Check progress at:"
+# Get the repo from the git remote if GITHUB_REPOSITORY isn't set
+if [ -z "${GITHUB_REPOSITORY:-}" ]; then
+  REPO=$(git remote get-url origin 2>/dev/null | sed -E 's#.*[:/]([^/]+/[^/.]+)(\.git)?#\1#' || echo "your-repo")
+else
+  REPO="$GITHUB_REPOSITORY"
+fi
+echo "  https://github.com/$REPO/actions"
