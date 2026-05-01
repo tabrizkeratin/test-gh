@@ -84,7 +84,7 @@ if [ "$LOCAL_ONLY" = true ] || [ "$CONFIRM" = true ]; then
   # Return to default branch and clean untracked files
   DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | awk '{print $NF}')
   git checkout "$DEFAULT_BRANCH" 2>/dev/null || git checkout main 2>/dev/null || true
-  git clean -fdx
+  git clean -fdx -e .env
   echo ""
   echo "Local repository cleaned."
 fi
