@@ -206,9 +206,8 @@ jobs:
         run: |
           mkdir -p downloads
           find artifacts -type f -exec cp {} downloads/ \;
-          # If no files copied, create a placeholder to avoid empty dir issues
           if [ -z "$(ls -A downloads 2>/dev/null)" ]; then
-            echo "No files found in artifacts. Exiting gracefully."
+            echo "No files found in artifacts."
             touch downloads/.placeholder
           fi
 
@@ -217,7 +216,6 @@ jobs:
         run: |
           SPLIT_SIZE=${{ github.event.inputs.split_size_mb }}
           cd downloads
-          # Skip splitting if only placeholder exists
           if [[ -f ".placeholder" ]]; then
             echo "No files to split."
             exit 0
@@ -230,24 +228,37 @@ jobs:
             fi
           done
 
-      - name: Zip all files if mode is download-zip
+      - name: Zip all files if mode is download-zip and no splitting occurred
         if: github.event.inputs.mode == 'download-zip' || (github.event.inputs.mode == 'auto' && needs.download.result != 'skipped')
         run: |
           cd downloads
-          # Check if there are real files (excluding .placeholder)
           if [[ -f ".placeholder" ]]; then
-            echo "No files to zip. Skipping."
+            echo "No files to zip."
             exit 0
           fi
-          if [ -z "$(ls -A)" ]; then
-            echo "No files to zip. Skipping."
+          # Skip if split parts exist
+          if ls *.part.* 1> /dev/null 2>&1; then
+            echo "Split parts detected. Skipping zip to avoid exceeding 100MB limit."
+            echo "Files will be committed individually (split parts)."
             exit 0
           fi
-          echo "Zipping all files in downloads/"
-          zip -r all-files.zip . -x ".placeholder"
+          # Check total size
+          total_size=0
+          for f in *; do
+            if [[ -f "$f" ]]; then
+              size=$(stat -c%s "$f")
+              total_size=$((total_size + size))
+            fi
+          done
+          if [[ $total_size -gt 104857600 ]]; then
+            echo "Total size of files (${total_size} bytes) exceeds GitHub's 100MB limit."
+            echo "Skipping zip and committing files individually."
+            exit 0
+          fi
+          echo "Zipping all files in downloads/ (total size < 100MB)"
+          zip -r all-files.zip .
           # Remove original files except the zip
           find . -type f ! -name "all-files.zip" -delete
-          # Move zip up one level then back to keep only zip
           mv all-files.zip ../all-files.zip
           cd ..
           rm -rf downloads
