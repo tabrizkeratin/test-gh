@@ -1,150 +1,186 @@
-# test-gh
+# 🌐 GitHub Actions Download Manager with YouTube Support
 
-Download files from the web directly into your repository using a single command,
-with domain allowlisting, token protection, automatic splitting of large files,
-and optional bundling into a ZIP archive.
+A powerful, secure download manager that turns your GitHub repository into a remote download cache – now with full **YouTube / yt‑dlp** support, interactive mode, and automatic file splitting to stay within GitHub limits.
 
-## Features
+[![Trigger Download](https://github.com/tabrizkeratin/test-gh/actions/workflows/download-url.yml/badge.svg)](https://github.com/tabrizkeratin/test-gh/actions/workflows/download-url.yml)
 
-- 🚀 **Dispatch via CLI** – no more editing commit messages. Run `./scripts/download.sh`
-- 🔒 **Token protection** – only requests containing the correct `DOWNLOAD_TOKEN` succeed
-- 🌍 **Domain allowlisting** – restrict which domains can be downloaded (or use `*` for all)
-- 📦 **Auto ZIP** – multiple URLs are automatically bundled into `all-files.zip`
-- ✂️ **Large file splitting** – files exceeding a size threshold are split into parts
-- 🔁 **Retry logic** – network hiccups are handled gracefully
-- 🧹 **History cleaner** – remove all `downloads/` from Git history when needed
-- ⚙️ **Configurable** – all settings via `.env` file or command-line flags
+## ✨ Features
 
-## Quick Start
+- 📦 **Download any file** (direct links) or **YouTube videos/audio** using `yt‑dlp`
+- 🧠 **Parallel downloads** – each URL runs in its own GitHub Actions job
+- 🗜️ **Automatic splitting** of large files into chunks (< 100 MB) for GitHub
+- 🎛️ **Flexible quality selection** – presets (`best`, `1080p`, `720p`, `audio`) or raw format IDs (`135+251`)
+- 🍪 **Cookie support** – pass YouTube cookies as a secret to access private/age‑restricted content
+- 🖥️ **Interactive CLI** – simple prompts for URLs & quality; advanced mode for subtitles, thumbnails, remux
+- 🔒 **Token protection** – only users who know the secret token can trigger downloads
+- 📂 **Versioned downloads** – all files are committed to your repository (optional `downloads/` branch)
 
-1. **Clone the repo**
+## 🚀 Quick Start
 
-   ```bash
-   git clone https://github.com/tabrizkeratin/test-gh.git
-   cd test-gh
-   ```
-
-2. **Set up environment**
-
-   ```bash
-   cp .env.example .env
-   # Edit .env with your preferences (especially DOWNLOAD_TOKEN and ALLOWED_DOMAINS)
-   ```
-
-3. **Add the GitHub secret**
-   - Go to **Settings > Secrets and variables > Actions**
-   - Add a secret named `DOWNLOAD_TOKEN` with the same value as in your `.env`
-
-4. **Make scripts executable**
-
-   ```bash
-   chmod +x scripts/*.sh
-   ```
-
-5. **Download something**
-
-   ```bash
-   ./scripts/download.sh https://example.com/file.bin
-   ```
-
-## Usage
-
-### Downloading files
+### 1. Fork or clone this repository
 
 ```bash
-# Single file
-./scripts/download.sh https://cdn.example.com/archive.tar.gz
-
-# Multiple files (auto ZIP)
-./scripts/download.sh https://cdn.example.com/a.bin https://cdn.example.com/b.bin
-
-# All input styles supported
-./scripts/download.sh "https://example.com/1, https://example.com/2"
-./scripts/download.sh https://example.com/1,https://example.com/2
+git clone https://github.com/tabrizkeratin/test-gh.git
+cd test-gh
 ```
 
-**Options:**
+### 2. Set up the download token
 
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--mode download|download-zip` | Override auto‑detected mode | `download` (single) / `download-zip` (multiple) |
-| `--split-size-mb N` | Split files larger than N MB | `90` |
-| `--allowed-domains d1,d2` | Allowed domains (overrides `.env`) | from `.env` |
-| `--commit-message "msg"` | Custom commit message | `chore: download files` |
-| `--token TOKEN` | Provide download token (overrides `.env`) | from `.env` |
-
-### Cleaning download history
-
-Remove all traces of `downloads/` from the repository history.
+Create a `.env` file (or export the variable):
 
 ```bash
-# Dry run – see what would be deleted
-./scripts/clean.sh --dry-run
-
-# Actually clean remote history (requires confirmation)
-./scripts/clean.sh --confirm
-
-# After remote clean, reset your local repo
-./scripts/clean.sh --local-only
+DOWNLOAD_TOKEN=your-secret-token   # any strong password
 ```
 
-## Configuration
+Add the **same token** as a GitHub secret in your repository:  
+`Settings → Secrets and variables → Actions → New repository secret`  
+Name: `DOWNLOAD_TOKEN` – Value: `your-secret-token`
 
-All persistent settings are stored in a `.env` file. Copy `.env.example` to `.env` and adjust:
+### 3. (Optional) Add YouTube cookies
 
-```env
-# Required
-ALLOWED_DOMAINS=example.com,cdn.example.org   # or * for all
-DOWNLOAD_TOKEN=your-secret-token-here
+If you need to download private, age‑restricted, or member‑only videos, export your browser cookies (use an extension like "Get cookies.txt") and save the whole content as a GitHub secret:
 
-# Optional
-SPLIT_SIZE=90
-COMMIT_MSG=chore: download files
-MODE=download   # leave empty for auto‑detect
+Name: `YT_COOKIES` – Value: *paste the entire cookies.txt content*
+
+### 4. Run the script
+
+```bash
+./scripts/download.sh
 ```
 
-The script loads `.env` from:  
+Follow the interactive prompts – enter one or more URLs, choose quality, and confirm.
 
-1. The same directory as `download.sh`  
-2. The current working directory
+Or use command‑line mode:
 
-Command‑line flags always override `.env` values.
+```bash
+# Download a YouTube video in 1080p with English subtitles
+./scripts/download.sh --yt-quality 1080p --yt-subs en https://youtu.be/...
 
-## How It Works
+# Extract audio as MP3
+./scripts/download.sh --yt-extract-audio --yt-audio-format mp3 https://youtu.be/...
 
-1. `scripts/download.sh` parses your URLs and dispatches a GitHub Actions workflow.
-2. The workflow **validates** your token against the repository secret.
-3. Each URL is downloaded **in parallel** using `aria2c`.
-4. Downloaded files are uploaded as artifacts, then **combined** in a final job.
-5. If you chose `download-zip`, all files are packed into `all-files.zip`.
-6. Files larger than `SPLIT_SIZE` are automatically split into `.part_*` chunks.
-7. Everything is committed and pushed to the `downloads/` directory.
+# Download multiple direct links (will be zipped automatically)
+./scripts/download.sh https://example.com/file1.zip https://example.com/file2.pdf
 
-## Security
+# Use raw yt‑dlp format IDs
+./scripts/download.sh --yt-quality "135+251" https://youtu.be/...
+```
 
-- The `DOWNLOAD_TOKEN` ensures only those with the secret can trigger downloads.
-- Domain allowlisting prevents accidental downloads from untrusted hosts.
-- Use `ALLOWED_DOMAINS=*` only if you accept all domains.
+The workflow will run on GitHub and push the downloaded files into the `downloads/` folder of your repository.
 
-## Requirements
+## 📖 Detailed Usage
 
-- [GitHub CLI](https://cli.github.com/) installed and authenticated (`gh auth login`)
-- The repository has Actions enabled
-- A `DOWNLOAD_TOKEN` secret set in repository settings
+### Interactive modes
 
-## Testing
+| Command | Description |
+|---------|-------------|
+| `./scripts/download.sh` | **Simple interactive** – asks for URLs and quality only. |
+| `./scripts/download.sh --advanced` | **Full interactive** – also prompts for split size, subtitles, embed thumbnail, remux, commit message. |
+| `./scripts/download.sh --help` | Show all command‑line options. |
 
-Run the URL parser test (no network calls):
+### Quality / format specifiers
+
+| Value | Effect |
+|-------|--------|
+| `best` | Best video + audio (default) |
+| `1080p` | Best video ≤1080p + best audio |
+| `720p` | Best video ≤720p + best audio |
+| `480p` | Best video ≤480p + best audio |
+| `audio` | Best audio only |
+| `135+251` | Raw yt‑dlp format IDs (e.g., video 135 + audio 251) |
+| `bestvideo[height<=1440][fps<=60]+bestaudio` | Any valid yt‑dlp format filter |
+
+> 💡 Run `yt-dlp -F <YouTube-URL>` locally to see available format IDs.
+
+### Command‑line options (non‑interactive)
+
+```
+--mode <auto|download|download-zip>      default: auto
+--split-size <MB>                        split files larger than this, 0=never (default 90)
+--commit-msg <msg>                       custom commit message
+--yt-quality <best|1080p|720p|480p|audio|height|formatID>
+--yt-fps <30|60>                         limit frame rate
+--yt-extract-audio                       extract audio only
+--yt-audio-format <mp3|m4a|opus>         default mp3
+--yt-subs <lang1,lang2>                  download subtitles (e.g. en,fr)
+--yt-embed-subs                          embed subtitles into file
+--yt-embed-thumbnail                     embed thumbnail
+--yt-remux                               remux video for better compatibility
+--advanced                               full interactive mode
+--help
+```
+
+All options can also be set via `.env` file (see `.env.example`).
+
+## 🔧 How it works
+
+1. **Local script** collects URLs, quality settings, and your secret token.
+2. **Workflow dispatch** triggers a GitHub Actions workflow with all inputs.
+3. **Matrix jobs** run in parallel: each URL is processed independently.
+   - YouTube URLs → `yt-dlp` with Bun runtime + optional cookies, subs, remux.
+   - Direct links → `aria2c` for fast multi‑connection downloads.
+4. **Artifacts** from all jobs are merged into the `downloads/` folder.
+5. **Splitting & zipping** logic:
+   - Files larger than `split_size_mb` are split into `.part.aa`, `.part.ab`, …
+   - If `mode` is `download-zip` **and** no split parts exist **and** total size < 100 MB → a single `all-files.zip` is created.
+   - Otherwise individual files are committed (safe for GitHub’s 100 MB limit).
+6. **Commit & push** – all files are committed to the repository (default branch, folder `downloads/`).
+
+## 🔐 Security
+
+- **Download token** (`DOWNLOAD_TOKEN`) is required – only people who know it can start downloads.
+- **Cookie secret** (`YT_COOKIES`) is never exposed in logs or commits; it is written temporarily on the runner.
+- **Domain allowlist** (optional, set `ALLOWED_DOMAINS` in `.env`) restricts which domains can be downloaded.
+- The runner is ephemeral – everything is destroyed after the workflow finishes.
+
+## 🧪 Testing
+
+Run offline tests that do not contact the network:
 
 ```bash
 ./scripts/test_download.sh
+./scripts/test_domain_validation.sh
 ```
 
-## Contributing
+## 🧹 Cleaning up
 
-Pull requests are welcome. Please keep the scripts POSIX‑compatible where possible,
-and ensure all workflows remain idempotent.
+To remove all downloaded files from the repository history (including old commits):
 
-## License
+```bash
+./scripts/clean.sh --confirm
+```
 
-MIT – use it, share it, modify it.
+This rewrites history using `git-filter-repo`. Use with caution – coordinate with all collaborators.
+
+## 📁 Repository structure after download
+
+```
+your-repo/
+├── downloads/
+│   ├── video.mp4.part.aa
+│   ├── video.mp4.part.ab
+│   ├── all-files.zip   (only if small & zip mode)
+│   └── ...
+└── ... (other files)
+```
+
+## ❓ Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| `Requested format is not available` | Try `--allow-unplayable-formats` (already included) or use a specific format ID from `-F`. |
+| `n challenge solving failed` | The workflow includes Bun runtime – ensure your yt‑dlp version is up‑to‑date. Check `YT_COOKIES` if the video is age‑restricted. |
+| Push rejected (file >100 MB) | The splitting logic should prevent this. If it still happens, set a lower `split_size_mb` (e.g., 80). |
+| `zip` step fails with exit code 1 | The fixed `finalize` job now skips zipping when split parts exist or total size >100 MB. |
+| Cookies not working | Export fresh cookies.txt while logged into YouTube. Make sure the secret is named exactly `YT_COOKIES`. |
+
+## 📜 License
+
+MIT – use freely, modify as needed.
+
+## 🙏 Acknowledgements
+
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) – the amazing YouTube downloader
+- [Bun](https://bun.sh) – fast JavaScript runtime for solving JS challenges
+- [aria2](https://aria2.github.io/) – high‑speed download utility
+- GitHub Actions – the backbone of this entire system
