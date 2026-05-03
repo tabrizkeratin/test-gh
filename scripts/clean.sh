@@ -103,6 +103,8 @@ git-filter-repo --path downloads/ --invert-paths --force
 echo ""
 echo "Force pushing to $REMOTE $CURRENT_BRANCH..."
 git push --force "$REMOTE" "$CURRENT_BRANCH"
+# git-filter-repo removes the 'origin' remote; re-add it
+git remote add origin "$REMOTE" 2>/dev/null || git remote set-url origin "$REMOTE"
 
 # 3. Purge workflow runs if requested
 if [[ "$PURGE_RUNS" == "true" ]]; then
