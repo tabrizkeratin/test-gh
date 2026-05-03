@@ -134,7 +134,7 @@ jobs:
         if: steps.detect.outputs.is_youtube == 'true'
         run: |
           # Base command with Bun runtime
-          CMD="yt-dlp --allow-unplayable-formats --no-progress --js-runtimes bun --remote-components ejs:npm"
+          CMD="yt-dlp --no-progress --js-runtimes bun --remote-components ejs:npm"
           if [[ -n "${{ steps.cookies.outputs.cookie_file }}" ]]; then
             CMD="$CMD --cookies ${{ steps.cookies.outputs.cookie_file }}"
           fi
