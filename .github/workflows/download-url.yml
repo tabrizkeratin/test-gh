@@ -15,7 +15,6 @@ on:
       token:
         description: "Download token (matches repository secret)"
         required: true
-      # yt-dlp specific inputs (computed locally)
       yt_format_spec:
         description: "yt-dlp format specifier (e.g., bestvideo[height<=720]+bestaudio)"
         default: "bestvideo+bestaudio"
@@ -76,9 +75,7 @@ jobs:
         id: prepare
         run: |
           INPUT_URLS="${{ github.event.inputs.urls }}"
-          # Replace commas with spaces and split
           URLS=$(echo "$INPUT_URLS" | tr ',' ' ' | xargs -n1 | sort -u)
-          # Convert to JSON array
           JSON=$(echo "$URLS" | jq -R -s -c 'split("\n") | map(select(length > 0))')
           echo "urls_json=$JSON" >> $GITHUB_OUTPUT
 
@@ -90,7 +87,7 @@ jobs:
         url: ${{ fromJson(needs.setup-matrix.outputs.urls_json) }}
       fail-fast: false
     steps:
-      - name: Install tools (yt-dlp binary + Deno + ffmpeg)
+      - name: Install tools (yt-dlp binary + Bun + ffmpeg)
         shell: bash
         run: |
           set -euo pipefail
@@ -102,10 +99,10 @@ jobs:
             sudo chmod a+rx /usr/local/bin/yt-dlp
           fi
 
-          # Deno (required for YouTube JS challenges)
-          if ! command -v deno &> /dev/null; then
-            curl -fsSL https://deno.land/install.sh | sh -s -- -y
-            echo "$HOME/.deno/bin" >> $GITHUB_PATH
+          # Bun (fast JavaScript runtime, replaces Deno)
+          if ! command -v bun &> /dev/null; then
+            curl -fsSL https://bun.sh/install | bash
+            echo "$HOME/.bun/bin" >> $GITHUB_PATH
           fi
 
           # ffmpeg, aria2, jq
@@ -133,11 +130,11 @@ jobs:
             echo "is_youtube=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Download with yt-dlp (YouTube + Deno)
+      - name: Download with yt-dlp (YouTube + Bun runtime)
         if: steps.detect.outputs.is_youtube == 'true'
         run: |
-          # Base command with Deno runtime
-          CMD="yt-dlp --no-progress --js-runtimes deno --remote-components ejs:npm"
+          # Base command with Bun runtime
+          CMD="yt-dlp --allow-unplayable-formats --no-progress --js-runtimes bun --remote-components ejs:npm"
           if [[ -n "${{ steps.cookies.outputs.cookie_file }}" ]]; then
             CMD="$CMD --cookies ${{ steps.cookies.outputs.cookie_file }}"
           fi
@@ -161,7 +158,7 @@ jobs:
           echo "Running: $CMD ${{ matrix.url }}"
           eval $CMD "${{ matrix.url }}"
 
-          # Optional remux for compatibility
+          # Optional remux
           if [[ "${{ github.event.inputs.yt_remux }}" == "true" ]]; then
             for f in *.mp4 *.webm *.mkv; do
               [ -f "$f" ] || continue
