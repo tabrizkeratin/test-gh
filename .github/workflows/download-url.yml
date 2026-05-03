@@ -62,7 +62,6 @@ jobs:
             echo "valid=true" >> $GITHUB_OUTPUT
           else
             echo "valid=false" >> $GITHUB_OUTPUT
-            echo "Invalid token" >&2
             exit 1
           fi
 
@@ -91,11 +90,27 @@ jobs:
         url: ${{ fromJson(needs.setup-matrix.outputs.urls_json) }}
       fail-fast: false
     steps:
-      - name: Install tools
+      - name: Install tools (yt-dlp binary + Deno + ffmpeg)
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg aria2 jq
-          pip3 install --upgrade yt-dlp
+          set -euo pipefail
+
+          # yt-dlp (direct binary from GitHub releases)
+          if ! command -v yt-dlp &> /dev/null; then
+            sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+                      -o /usr/local/bin/yt-dlp
+            sudo chmod a+rx /usr/local/bin/yt-dlp
+          fi
+
+          # Deno (required for YouTube JS challenges)
+          if ! command -v deno &> /dev/null; then
+            curl -fsSL https://deno.land/install.sh | sh -s -- -y
+            echo "$HOME/.deno/bin" >> $GITHUB_PATH
+          fi
+
+          # ffmpeg, aria2, jq
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq jq ffmpeg aria2
 
       - name: Prepare cookies (if secret exists)
         id: cookies
@@ -118,11 +133,11 @@ jobs:
             echo "is_youtube=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Download with yt-dlp (YouTube)
+      - name: Download with yt-dlp (YouTube + Deno)
         if: steps.detect.outputs.is_youtube == 'true'
         run: |
-          # Build yt-dlp command
-          CMD="yt-dlp --no-mtime --output '%(title)s.%(ext)s'"
+          # Base command with Deno runtime
+          CMD="yt-dlp --no-progress --js-runtimes deno --remote-components ejs:npm"
           if [[ -n "${{ steps.cookies.outputs.cookie_file }}" ]]; then
             CMD="$CMD --cookies ${{ steps.cookies.outputs.cookie_file }}"
           fi
@@ -146,7 +161,7 @@ jobs:
           echo "Running: $CMD ${{ matrix.url }}"
           eval $CMD "${{ matrix.url }}"
 
-          # Optional remux
+          # Optional remux for compatibility
           if [[ "${{ github.event.inputs.yt_remux }}" == "true" ]]; then
             for f in *.mp4 *.webm *.mkv; do
               [ -f "$f" ] || continue
