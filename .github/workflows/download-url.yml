@@ -1,119 +1,180 @@
-name: Download URLs
+name: Download URL(s) with direct & YouTube support
 
 on:
   workflow_dispatch:
     inputs:
-      download_token:
-        description: "Secret token required to download"
-        required: true
       urls:
-        description: "URLs to download (one per line)"
+        description: "URLs (space or comma separated)"
         required: true
-        type: string
       mode:
-        description: "download or download-zip"
-        required: true
-        type: choice
-        options:
-          - download
-          - download-zip
-        default: "download"
+        description: "Mode: download (single) or download-zip (multiple)"
+        default: "auto"
       split_size_mb:
-        description: "Split files larger than this size (MB)"
+        description: "Split files larger than this MB (0 = never split)"
+        default: "90"
+      token:
+        description: "Download token (matches repository secret)"
+        required: true
+      # yt-dlp specific inputs (computed locally)
+      yt_format_spec:
+        description: "yt-dlp format specifier (e.g., bestvideo[height<=720]+bestaudio)"
+        default: "bestvideo+bestaudio"
         required: false
-        type: number
-        default: 90
-      allowed_domains:
-        description: "Comma-separated allowed domains (* for all)"
+      yt_extract_audio:
+        description: "Extract audio only (true/false)"
+        default: "false"
         required: false
-        type: string
+      yt_audio_format:
+        description: "Audio container when extracting audio (mp3, m4a, opus)"
+        default: "mp3"
+        required: false
+      yt_subs:
+        description: "Subtitle languages (comma‑separated, e.g., en,fr)"
         default: ""
-      commit_message:
-        description: "Custom commit message"
         required: false
-        type: string
-        default: "chore: download files"
+      yt_embed_subs:
+        description: "Embed subtitles into file (true/false)"
+        default: "false"
+        required: false
+      yt_embed_thumbnail:
+        description: "Embed thumbnail (true/false)"
+        default: "false"
+        required: false
+      yt_remux:
+        description: "Remux video for better compatibility (true/false)"
+        default: "false"
+        required: false
 
-env:
-  DOWNLOADS_DIR: downloads
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+concurrency:
+  group: download-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  # Validate the download token early
   validate:
     runs-on: ubuntu-latest
+    outputs:
+      token_valid: ${{ steps.check_token.outputs.valid }}
     steps:
-      - name: Check token
+      - name: Validate download token
+        id: check_token
         run: |
-          if [ "${{ inputs.download_token }}" != "${{ secrets.DOWNLOAD_TOKEN }}" ]; then
-            echo "Invalid download token."
+          if [[ "${{ github.event.inputs.token }}" == "${{ secrets.DOWNLOAD_TOKEN }}" ]]; then
+            echo "valid=true" >> $GITHUB_OUTPUT
+          else
+            echo "valid=false" >> $GITHUB_OUTPUT
+            echo "Invalid token" >&2
             exit 1
           fi
 
-  # Parse URLs into a matrix
   setup-matrix:
     needs: validate
     runs-on: ubuntu-latest
+    if: needs.validate.outputs.token_valid == 'true'
     outputs:
-      matrix: ${{ steps.parse.outputs.matrix }}
+      urls_json: ${{ steps.prepare.outputs.urls_json }}
     steps:
-      - name: Parse URLs
-        id: parse
+      - name: Prepare URL matrix
+        id: prepare
         run: |
-          INPUT="${{ inputs.urls }}"
-          URLS=$(echo "$INPUT" | sed '/^$/d' | jq -R -s -c 'split("\n")[:-1]')
-          echo "matrix=$URLS" >> $GITHUB_OUTPUT
+          INPUT_URLS="${{ github.event.inputs.urls }}"
+          # Replace commas with spaces and split
+          URLS=$(echo "$INPUT_URLS" | tr ',' ' ' | xargs -n1 | sort -u)
+          # Convert to JSON array
+          JSON=$(echo "$URLS" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "urls_json=$JSON" >> $GITHUB_OUTPUT
 
-  # Download each URL in parallel, upload artifact
   download:
-    needs: [validate, setup-matrix]
+    needs: setup-matrix
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        url: ${{ fromJson(needs.setup-matrix.outputs.matrix) }}
+        url: ${{ fromJson(needs.setup-matrix.outputs.urls_json) }}
+      fail-fast: false
     steps:
-      - name: Install aria2
+      - name: Install tools
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq aria2
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg aria2 jq
+          pip3 install --upgrade yt-dlp
 
-      - name: Validate domain
+      - name: Prepare cookies (if secret exists)
+        id: cookies
+        env:
+          COOKIES_TXT: ${{ secrets.YT_COOKIES }}
         run: |
-          DOMAIN=$(echo "${{ matrix.url }}" | awk -F/ '{print $3}')
-          ALLOWED="${{ inputs.allowed_domains }}"
-          if [ "$ALLOWED" = "*" ]; then exit 0; fi
-          if [ -z "$ALLOWED" ]; then echo "No allowlist."; exit 1; fi
-          IFS=',' read -ra AD_ARR <<< "$ALLOWED"
-          FOUND=false
-          for AD in "${AD_ARR[@]}"; do
-            AD_CLEAN=$(echo "$AD" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-            if [[ "$DOMAIN" == "$AD_CLEAN" ]]; then FOUND=true; break; fi
-          done
-          if ! $FOUND; then echo "Domain '$DOMAIN' not allowed."; exit 1; fi
+          if [[ -n "$COOKIES_TXT" ]]; then
+            echo "$COOKIES_TXT" > cookies.txt
+            echo "cookie_file=cookies.txt" >> $GITHUB_OUTPUT
+          else
+            echo "cookie_file=" >> $GITHUB_OUTPUT
+          fi
 
-      - name: Download with retry
+      - name: Detect if YouTube
+        id: detect
         run: |
-          URL="${{ matrix.url }}"
-          FILENAME=$(basename "$URL" | cut -d'?' -f1)
-          mkdir -p download_staging
-          for i in $(seq 1 3); do
-            echo "Attempt $i"
-            if aria2c -x 4 -s 4 --dir=download_staging --out="$FILENAME" "$URL"; then
-              echo "Download success"
-              break
+          if echo "${{ matrix.url }}" | grep -Eq '(youtube\.com/watch\?v=|youtu\.be/)'; then
+            echo "is_youtube=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_youtube=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download with yt-dlp (YouTube)
+        if: steps.detect.outputs.is_youtube == 'true'
+        run: |
+          # Build yt-dlp command
+          CMD="yt-dlp --no-mtime --output '%(title)s.%(ext)s'"
+          if [[ -n "${{ steps.cookies.outputs.cookie_file }}" ]]; then
+            CMD="$CMD --cookies ${{ steps.cookies.outputs.cookie_file }}"
+          fi
+          CMD="$CMD -f '${{ github.event.inputs.yt_format_spec }}'"
+
+          if [[ "${{ github.event.inputs.yt_extract_audio }}" == "true" ]]; then
+            CMD="$CMD --extract-audio --audio-format ${{ github.event.inputs.yt_audio_format }}"
+          fi
+
+          if [[ -n "${{ github.event.inputs.yt_subs }}" ]]; then
+            CMD="$CMD --write-subs --sub-langs ${{ github.event.inputs.yt_subs }}"
+            if [[ "${{ github.event.inputs.yt_embed_subs }}" == "true" ]]; then
+              CMD="$CMD --embed-subs"
             fi
-            sleep 5
-            if [ $i -eq 3 ]; then echo "All attempts failed"; exit 1; fi
-          done
+          fi
+
+          if [[ "${{ github.event.inputs.yt_embed_thumbnail }}" == "true" ]]; then
+            CMD="$CMD --embed-thumbnail"
+          fi
+
+          echo "Running: $CMD ${{ matrix.url }}"
+          eval $CMD "${{ matrix.url }}"
+
+          # Optional remux
+          if [[ "${{ github.event.inputs.yt_remux }}" == "true" ]]; then
+            for f in *.mp4 *.webm *.mkv; do
+              [ -f "$f" ] || continue
+              echo "Remuxing $f ..."
+              ffmpeg -i "$f" -c copy "fixed_$f" -y && mv "fixed_$f" "$f"
+            done
+          fi
+
+          # Clean temporary files
+          rm -f cookies.txt
+          rm -f *.part
+
+      - name: Download with aria2c (non-YouTube)
+        if: steps.detect.outputs.is_youtube == 'false'
+        run: |
+          aria2c --max-connection-per-server=16 --split=16 --min-split-size=1M \
+                 --console-log-level=error --summary-interval=0 \
+                 --out="downloaded_file" "${{ matrix.url }}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: download-${{ strategy.job-index }}
-          path: download_staging/*
+          path: |
+            *
+            !cookies.txt
           retention-days: 1
 
-  # Combine all downloaded files, split large ones, create zip if needed, commit
   finalize:
     needs: download
     runs-on: ubuntu-latest
@@ -121,46 +182,52 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: main
-
-      - name: Pull latest (in case other pushes happened)
-        run: git pull origin main
+          persist-credentials: true
+          fetch-depth: 0
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          path: staging
+          path: artifacts
 
-      - name: Assemble downloads
+      - name: Move files to downloads/
         run: |
-          mkdir -p ${{ env.DOWNLOADS_DIR }}
-          # Flatten all artifact contents into downloads/
-          find staging -type f -exec mv {} ${{ env.DOWNLOADS_DIR }}/ \;
-          rm -rf staging
+          mkdir -p downloads
+          find artifacts -type f -exec cp {} downloads/ \;
 
-      - name: Create zip (if download-zip mode)
-        if: ${{ inputs.mode == 'download-zip' }}
+      - name: Split large files (if split_size_mb > 0)
+        if: github.event.inputs.split_size_mb != '0'
         run: |
-          cd ${{ env.DOWNLOADS_DIR }}
-          zip -r ../all-files.zip .
-          cd .. && rm -rf ${{ env.DOWNLOADS_DIR }}
-          mkdir -p ${{ env.DOWNLOADS_DIR }}
-          mv all-files.zip ${{ env.DOWNLOADS_DIR }}/
+          SPLIT_SIZE=${{ github.event.inputs.split_size_mb }}
+          cd downloads
+          for f in *; do
+            if [[ -f "$f" ]] && [[ $(stat -c%s "$f") -gt $((SPLIT_SIZE * 1048576)) ]]; then
+              echo "Splitting $f (size > ${SPLIT_SIZE}MB)"
+              split -b ${SPLIT_SIZE}M "$f" "${f}.part."
+              rm "$f"
+            fi
+          done
 
-      - name: Split large files
+      - name: Zip all files if mode is download-zip
+        if: github.event.inputs.mode == 'download-zip' || (github.event.inputs.mode == 'auto' && needs.download.result != 'skipped')
         run: |
-          SPLIT_MB=${{ inputs.split_size_mb }}
-          cd ${{ env.DOWNLOADS_DIR }}
-          find . -type f -size +"${SPLIT_MB}M" -exec sh -c '
-            echo "Splitting $1 (${2}MB parts)..."
-            split -b "${2}M" "$1" "$1.part_"
-            rm "$1"
-          ' _ {} "$SPLIT_MB" \;
+          cd downloads
+          zip -r all-files.zip .
+          rm -rf *
+          mv all-files.zip ../all-files.zip
+          cd ..
+          rm -rf downloads
+          mkdir downloads
+          mv all-files.zip downloads/
 
       - name: Commit and push
         run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git add ${{ env.DOWNLOADS_DIR }}/
-          git commit -m "${{ inputs.commit_message }}" || echo "Nothing to commit"
-          git push origin HEAD:main
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add downloads/
+          if ! git diff --cached --quiet; then
+            git commit -m "${{ github.event.inputs.commit_msg || 'Add downloaded files' }} [skip ci]"
+            git push
+          else
+            echo "No changes to commit."
+          fi

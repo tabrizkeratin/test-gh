@@ -1,155 +1,209 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# ------------------------------------------------------------
+# Direct link & YouTube downloader - local dispatcher
+# ------------------------------------------------------------
 
-if [ -f "$SCRIPT_DIR/.env" ]; then
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Load .env if present
+if [[ -f ".env" ]]; then
   set -a
-  source "$SCRIPT_DIR/.env"
+  source .env
   set +a
-elif [ -f ".env" ]; then
+elif [[ -f "../.env" ]]; then
   set -a
-  source ".env"
+  source ../.env
   set +a
 fi
 
-MODE="${MODE:-}"
+# Default values
+MODE="auto"
 SPLIT_SIZE="${SPLIT_SIZE:-90}"
-ALLOWED_DOMAINS="${ALLOWED_DOMAINS:-}"
-COMMIT_MSG="${COMMIT_MSG:-chore: download files}"
+ALLOWED_DOMAINS="${ALLOWED_DOMAINS:-*}"
 DOWNLOAD_TOKEN="${DOWNLOAD_TOKEN:-}"
+COMMIT_MSG="${COMMIT_MSG:-Add downloaded files}"
 
-usage() {
-  cat <<EOF
-Usage: $(basename "$0") [OPTIONS] URLS...
+# yt-dlp defaults
+YT_QUALITY="best"
+YT_FPS=""
+YT_EXTRACT_AUDIO="false"
+YT_AUDIO_FORMAT="mp3"
+YT_SUBS=""
+YT_EMBED_SUBS="false"
+YT_EMBED_THUMBNAIL="false"
+YT_REMUX="false"
 
-URLs can be specified in any of these ways:
-  ./download.sh https://example.com/a.bin https://example.com/b.bin
-  ./download.sh "https://example.com/a.bin https://example.com/b.bin"
-  ./download.sh "https://example.com/a.bin, https://example.com/b.bin"
-  ./download.sh https://example.com/a.bin,https://example.com/b.bin
-  and any combination.
-
-Options:
-  --mode            download | download-zip (auto-detected: single → download, multiple → download-zip)
-  --split-size-mb   Split files larger than this size (default: ${SPLIT_SIZE})
-  --allowed-domains Comma‑separated list of allowed domains (* for all)
-  --commit-message  Custom commit message
-  --token           Download token (overrides DOWNLOAD_TOKEN in .env)
-  -h, --help        Show this help
-EOF
-}
-
-URL_PARTS=()
+# Parse command line
+URLS=()
 while [[ $# -gt 0 ]]; do
-  case "$1" in
+  case $1 in
   --mode)
     MODE="$2"
     shift 2
     ;;
-  --split-size-mb)
+  --split-size)
     SPLIT_SIZE="$2"
     shift 2
     ;;
-  --allowed-domains)
-    ALLOWED_DOMAINS="$2"
-    shift 2
-    ;;
-  --commit-message)
+  --commit-msg)
     COMMIT_MSG="$2"
     shift 2
     ;;
-  --token)
-    DOWNLOAD_TOKEN="$2"
+  --yt-quality)
+    YT_QUALITY="$2"
     shift 2
     ;;
-  -h | --help)
-    usage
+  --yt-fps)
+    YT_FPS="$2"
+    shift 2
+    ;;
+  --yt-extract-audio)
+    YT_EXTRACT_AUDIO="true"
+    shift
+    ;;
+  --yt-audio-format)
+    YT_AUDIO_FORMAT="$2"
+    shift 2
+    ;;
+  --yt-subs)
+    YT_SUBS="$2"
+    shift 2
+    ;;
+  --yt-embed-subs)
+    YT_EMBED_SUBS="true"
+    shift
+    ;;
+  --yt-embed-thumbnail)
+    YT_EMBED_THUMBNAIL="true"
+    shift
+    ;;
+  --yt-remux)
+    YT_REMUX="true"
+    shift
+    ;;
+  --help)
+    cat <<EOF
+Usage: $0 [options] <URL> [URL...]
+
+Options:
+  --mode <auto|download|download-zip>   default auto
+  --split-size <MB>                     split files larger than this, 0 = never (default 90)
+  --commit-msg <msg>                    custom commit message
+
+YouTube-specific:
+  --yt-quality <best|1080p|720p|480p|audio|height>   default best
+  --yt-fps <30|60>                      limit frame rate
+  --yt-extract-audio                    extract audio only
+  --yt-audio-format <mp3|m4a|opus>      default mp3
+  --yt-subs <lang1,lang2>               download subtitles (e.g. en,fr)
+  --yt-embed-subs                       embed subtitles into file
+  --yt-embed-thumbnail                  embed thumbnail
+  --yt-remux                            remux video for better compatibility
+
+Environment variables (can be set in .env):
+  ALLOWED_DOMAINS, DOWNLOAD_TOKEN, SPLIT_SIZE, COMMIT_MSG
+EOF
     exit 0
     ;;
-  --*)
+  -*)
     echo "Unknown option: $1"
-    usage
     exit 1
     ;;
   *)
-    URL_PARTS+=("$1")
+    URLS+=("$1")
     shift
     ;;
   esac
 done
 
-# Parse URLs
-raw_input="${URL_PARTS[*]}"
-unified=$(echo "$raw_input" | tr ',' ' ')
-urls=()
-for token in $unified; do
-  clean=$(echo "$token" | sed -e 's/^["'"'"']//' -e 's/["'"'"']$//')
-  urls+=("$clean")
-done
-filtered_urls=()
-for u in "${urls[@]}"; do [ -n "$u" ] && filtered_urls+=("$u"); done
-urls=("${filtered_urls[@]}")
-
-if [ ${#urls[@]} -eq 0 ]; then
-  echo "Error: no URLs."
-  usage
+if [[ ${#URLS[@]} -eq 0 ]]; then
+  echo "Error: No URLs provided"
   exit 1
 fi
 
-# Auto mode
-if [ -z "$MODE" ]; then
-  if [ ${#urls[@]} -gt 1 ]; then MODE="download-zip"; else MODE="download"; fi
-  echo "Auto‑detected mode: $MODE"
+# Auto-detect mode
+if [[ "$MODE" == "auto" ]]; then
+  if [[ ${#URLS[@]} -eq 1 ]]; then
+    MODE="download"
+  else
+    MODE="download-zip"
+  fi
 fi
 
-# Trim allowed domains
-ALLOWED_DOMAINS_TRIM=$(echo "$ALLOWED_DOMAINS" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | paste -sd ',' -)
-
-if [ -z "$ALLOWED_DOMAINS_TRIM" ] && [ "$ALLOWED_DOMAINS_TRIM" != "*" ]; then
-  echo "Error: no allowed domains."
+# Validate token
+if [[ -z "$DOWNLOAD_TOKEN" ]]; then
+  echo "Error: DOWNLOAD_TOKEN not set in .env or environment"
   exit 1
 fi
 
-# Token
-if [ -z "$DOWNLOAD_TOKEN" ]; then
-  read -rsp "Enter download token: " DOWNLOAD_TOKEN
-  echo
-fi
-if [ -z "$DOWNLOAD_TOKEN" ]; then
-  echo "Error: no token."
-  exit 1
-fi
+# Build yt-dlp format spec from user-friendly options
+build_yt_format_spec() {
+  local quality="$1"
+  local fps="$2"
+  local extract_audio="$3"
 
-URL_INPUT=$(
-  IFS=$'\n'
-  echo "${urls[*]}"
-)
+  if [[ "$extract_audio" == "true" ]]; then
+    echo "bestaudio/best"
+    return
+  fi
 
-echo ""
-echo "Dispatching workflow:"
-echo "  URLs (${#urls[@]}):"
-for u in "${urls[@]}"; do echo "    - $u"; done
-echo "  Mode:               $MODE"
-echo "  Split size:         ${SPLIT_SIZE}MB"
-echo "  Allowed domains:    $ALLOWED_DOMAINS_TRIM"
-echo "  Commit message:     $COMMIT_MSG"
-echo ""
+  case "$quality" in
+  best)
+    echo "bestvideo+bestaudio/best"
+    ;;
+  1080p)
+    echo "bestvideo[height<=1080]+bestaudio/best[height<=1080]"
+    ;;
+  720p)
+    echo "bestvideo[height<=720]+bestaudio/best[height<=720]"
+    ;;
+  480p)
+    echo "bestvideo[height<=480]+bestaudio/best[height<=480]"
+    ;;
+  audio)
+    echo "bestaudio/best"
+    ;;
+  *)
+    if [[ "$quality" =~ ^[0-9]+$ ]]; then
+      if [[ -n "$fps" ]]; then
+        echo "bestvideo[height<=$quality][fps<=$fps]+bestaudio/best[height<=$quality][fps<=$fps]"
+      else
+        echo "bestvideo[height<=$quality]+bestaudio/best[height<=$quality]"
+      fi
+    else
+      # raw format string
+      echo "$quality"
+    fi
+    ;;
+  esac
+}
+
+YT_FORMAT_SPEC=$(build_yt_format_spec "$YT_QUALITY" "$YT_FPS" "$YT_EXTRACT_AUDIO" "$YT_AUDIO_FORMAT")
+
+# Prepare URLs string (space separated)
+URLS_STR="${URLS[*]}"
+
+# Dispatch workflow
+echo "Dispatching workflow with ${#URLS[@]} URL(s)..."
+echo "Mode: $MODE"
+echo "Split size: ${SPLIT_SIZE}MB"
+echo "YT format spec: $YT_FORMAT_SPEC"
 
 gh workflow run download-url.yml \
-  -f download_token="$DOWNLOAD_TOKEN" \
-  -f urls="$URL_INPUT" \
+  -f urls="$URLS_STR" \
   -f mode="$MODE" \
   -f split_size_mb="$SPLIT_SIZE" \
-  -f allowed_domains="$ALLOWED_DOMAINS_TRIM" \
-  -f commit_message="$COMMIT_MSG" \
-  --ref main
+  -f token="$DOWNLOAD_TOKEN" \
+  -f yt_format_spec="$YT_FORMAT_SPEC" \
+  -f yt_extract_audio="$YT_EXTRACT_AUDIO" \
+  -f yt_audio_format="$YT_AUDIO_FORMAT" \
+  -f yt_subs="$YT_SUBS" \
+  -f yt_embed_subs="$YT_EMBED_SUBS" \
+  -f yt_embed_thumbnail="$YT_EMBED_THUMBNAIL" \
+  -f yt_remux="$YT_REMUX"
 
-echo "Workflow dispatched. Check progress at:"
-# Get the repo from the git remote if GITHUB_REPOSITORY isn't set
-if [ -z "${GITHUB_REPOSITORY:-}" ]; then
-  REPO=$(git remote get-url origin 2>/dev/null | sed -E 's#.*[:/]([^/]+/[^/.]+)(\.git)?#\1#' || echo "your-repo")
-else
-  REPO="$GITHUB_REPOSITORY"
-fi
-echo "  https://github.com/$REPO/actions"
+echo "Workflow triggered. Check progress at:"
+echo "https://github.com/$(git config --get remote.origin.url | sed 's/.*:\(.*\)\.git/\1/')/actions"
