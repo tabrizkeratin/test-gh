@@ -188,58 +188,80 @@ jobs:
           retention-days: 1
 
   finalize:
-    needs: download
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: true
-          fetch-depth: 0
+  needs: download
+  runs-on: ubuntu-latest
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        persist-credentials: true
+        fetch-depth: 0
 
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
 
-      - name: Move files to downloads/
-        run: |
-          mkdir -p downloads
-          find artifacts -type f -exec cp {} downloads/ \;
+    - name: Move files to downloads/
+      run: |
+        mkdir -p downloads
+        find artifacts -type f -exec cp {} downloads/ \;
+        # If no files copied, create a placeholder to avoid empty dir issues
+        if [ -z "$(ls -A downloads 2>/dev/null)" ]; then
+          echo "No files found in artifacts. Exiting gracefully."
+          touch downloads/.placeholder
+        fi
 
-      - name: Split large files (if split_size_mb > 0)
-        if: github.event.inputs.split_size_mb != '0'
-        run: |
-          SPLIT_SIZE=${{ github.event.inputs.split_size_mb }}
-          cd downloads
-          for f in *; do
-            if [[ -f "$f" ]] && [[ $(stat -c%s "$f") -gt $((SPLIT_SIZE * 1048576)) ]]; then
-              echo "Splitting $f (size > ${SPLIT_SIZE}MB)"
-              split -b ${SPLIT_SIZE}M "$f" "${f}.part."
-              rm "$f"
-            fi
-          done
-
-      - name: Zip all files if mode is download-zip
-        if: github.event.inputs.mode == 'download-zip' || (github.event.inputs.mode == 'auto' && needs.download.result != 'skipped')
-        run: |
-          cd downloads
-          zip -r all-files.zip .
-          rm -rf *
-          mv all-files.zip ../all-files.zip
-          cd ..
-          rm -rf downloads
-          mkdir downloads
-          mv all-files.zip downloads/
-
-      - name: Commit and push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add downloads/
-          if ! git diff --cached --quiet; then
-            git commit -m "${{ github.event.inputs.commit_msg || 'Add downloaded files' }} [skip ci]"
-            git push
-          else
-            echo "No changes to commit."
+    - name: Split large files (if split_size_mb > 0)
+      if: github.event.inputs.split_size_mb != '0'
+      run: |
+        SPLIT_SIZE=${{ github.event.inputs.split_size_mb }}
+        cd downloads
+        # Skip splitting if only placeholder exists
+        if [[ -f ".placeholder" ]]; then
+          echo "No files to split."
+          exit 0
+        fi
+        for f in *; do
+          if [[ -f "$f" ]] && [[ $(stat -c%s "$f") -gt $((SPLIT_SIZE * 1048576)) ]]; then
+            echo "Splitting $f (size > ${SPLIT_SIZE}MB)"
+            split -b ${SPLIT_SIZE}M "$f" "${f}.part."
+            rm "$f"
           fi
+        done
+
+    - name: Zip all files if mode is download-zip
+      if: github.event.inputs.mode == 'download-zip' || (github.event.inputs.mode == 'auto' && needs.download.result != 'skipped')
+      run: |
+        cd downloads
+        # Check if there are real files (excluding .placeholder)
+        if [[ -f ".placeholder" ]]; then
+          echo "No files to zip. Skipping."
+          exit 0
+        fi
+        if [ -z "$(ls -A)" ]; then
+          echo "No files to zip. Skipping."
+          exit 0
+        fi
+        echo "Zipping all files in downloads/"
+        zip -r all-files.zip . -x ".placeholder"
+        # Remove original files except the zip
+        find . -type f ! -name "all-files.zip" -delete
+        # Move zip up one level then back to keep only zip
+        mv all-files.zip ../all-files.zip
+        cd ..
+        rm -rf downloads
+        mkdir downloads
+        mv all-files.zip downloads/
+
+    - name: Commit and push
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add downloads/
+        if ! git diff --cached --quiet; then
+          git commit -m "${{ github.event.inputs.commit_msg || 'Add downloaded files' }} [skip ci]"
+          git push
+        else
+          echo "No changes to commit."
+        fi
