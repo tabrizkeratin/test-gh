@@ -1,133 +1,137 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-usage() {
-  cat <<EOF
-Usage: $(basename "$0") [--dry-run] [--confirm] [--local-only] [--purge-runs]
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
-Options:
-  --dry-run      Trigger a dry-run workflow (default)
-  --confirm      Actually rewrite remote history (requires confirmation)
-  --local-only   Only reset local repo (no remote workflow)
-  --purge-runs   After a successful remote clean, delete all completed workflow runs
-  -h, --help     Show this help
-EOF
-}
-
+# Defaults
 DRY_RUN=true
-CONFIRM=false
-LOCAL_ONLY=false
 PURGE_RUNS=false
+LOCAL_GC=false
 
+# Parse arguments
 while [[ $# -gt 0 ]]; do
-  case "$1" in
-  --dry-run)
-    DRY_RUN=true
-    CONFIRM=false
-    shift
-    ;;
+  case $1 in
   --confirm)
-    CONFIRM=true
     DRY_RUN=false
     shift
     ;;
-  --local-only)
-    LOCAL_ONLY=true
+  --dry-run)
+    DRY_RUN=true
     shift
     ;;
   --purge-runs)
     PURGE_RUNS=true
     shift
     ;;
-  -h | --help)
-    usage
+  --local-gc)
+    LOCAL_GC=true
+    shift
+    ;;
+  --help)
+    cat <<EOF
+Usage: $0 [options]
+
+Options:
+  --confirm       Actually perform destructive cleanup (rewrite history, force push)
+  --dry-run       Show what would be done (default)
+  --purge-runs    After successful cleanup, delete completed workflow runs
+  --local-gc      Also run local git garbage collection to shrink repository size
+  --help          Show this help
+
+This tool removes the entire 'downloads/' folder from the repository history
+using git-filter-repo. It then force-pushes the rewritten history.
+
+WARNING: This rewrites commit history. All collaborators must reclone or reset.
+EOF
     exit 0
     ;;
   *)
     echo "Unknown option: $1"
-    usage
     exit 1
     ;;
   esac
 done
 
-# --- Remote part --------------------------------------------------------------
-if [ "$LOCAL_ONLY" = false ]; then
-  if [ "$CONFIRM" = true ]; then
-    read -rp "This will irrevocably rewrite remote history. Type 'YES' to continue: " answer
-    if [ "$answer" != "YES" ]; then
-      echo "Aborted."
-      exit 0
-    fi
-    echo "Dispatching clean workflow (confirm)..."
-    gh workflow run clean-downloads.yml -f dry_run=false -f confirm="YES" --ref main
+# Check prerequisites
+if ! command -v git-filter-repo &>/dev/null; then
+  echo "Error: git-filter-repo not installed."
+  echo "Install with: pip install git-filter-repo (or apt install git-filter-repo)"
+  exit 1
+fi
+
+# Get current branch name
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+REMOTE=$(git remote get-url origin 2>/dev/null || echo "origin")
+
+echo "========================================="
+echo "  Downloads History Cleaner"
+echo "========================================="
+echo "Repository: $(basename "$(git rev-parse --show-toplevel)")"
+echo "Current branch: $CURRENT_BRANCH"
+echo "Remote: $REMOTE"
+echo ""
+
+if [[ "$DRY_RUN" == "true" ]]; then
+  echo "⚠️  DRY RUN MODE – no changes will be made."
+  echo ""
+  echo "Would remove 'downloads/' from entire git history."
+  if [[ "$PURGE_RUNS" == "true" ]]; then
+    echo "Would also purge completed workflow runs."
+  fi
+  if [[ "$LOCAL_GC" == "true" ]]; then
+    echo "Would also run local git GC after cleanup."
+  fi
+  echo ""
+  echo "To perform actual cleanup, run: $0 --confirm"
+  exit 0
+fi
+
+echo "⚠️  CONFIRMED – this will REWRITE HISTORY and FORCE PUSH."
+read -rp "Type 'yes' to continue: " confirm
+if [[ "$confirm" != "yes" ]]; then
+  echo "Aborted."
+  exit 0
+fi
+
+# 1. Run git-filter-repo to remove downloads/ folder
+echo ""
+echo "Removing 'downloads/' from history..."
+git-filter-repo --path downloads/ --invert-paths --force
+
+# 2. Force push the rewritten history
+echo ""
+echo "Force pushing to $REMOTE $CURRENT_BRANCH..."
+git push --force "$REMOTE" "$CURRENT_BRANCH"
+
+# 3. Purge workflow runs if requested
+if [[ "$PURGE_RUNS" == "true" ]]; then
+  echo ""
+  echo "Purging completed workflow runs..."
+  if [[ -f "$SCRIPT_DIR/clean-runs.sh" ]]; then
+    "$SCRIPT_DIR/clean-runs.sh"
   else
-    echo "Dispatching dry-run clean workflow..."
-    gh workflow run clean-downloads.yml -f dry_run=true --ref main
-    echo ""
-    echo "Dry-run dispatched. Check workflow logs for what would be removed."
-    echo "To actually clean, run: ./scripts/clean.sh --confirm"
-    exit 0
+    echo "Warning: clean-runs.sh not found. Skipping."
   fi
 fi
 
-# --- Wait for the remote workflow to finish (if confirm) ---------------------
-if [ "$CONFIRM" = true ]; then
+# 4. Local garbage collection (optional)
+if [[ "$LOCAL_GC" == "true" ]]; then
   echo ""
-  echo "Waiting for the clean workflow to complete..."
-  # The run we just dispatched is the most recent one for this workflow
-  RUN_ID=$(gh run list --workflow=clean-downloads.yml --limit 1 --json databaseId -q '.[0].databaseId')
-  if [ -z "$RUN_ID" ]; then
-    echo "Could not find a recent run. It may have finished already."
-  else
-    echo "Watching run $RUN_ID..."
-    gh run watch "$RUN_ID" || {
-      echo "Clean workflow failed. Aborting local reset."
-      exit 1
-    }
-  fi
-  echo "Clean workflow finished successfully."
-fi
-
-# --- Local reset (only after a successful confirmed clean or local-only) ------
-if [ "$LOCAL_ONLY" = true ] || [ "$CONFIRM" = true ]; then
-  echo ""
-  echo "Resetting local branches to match remote..."
-  git fetch --prune
-  git fetch origin --tags
-
-  DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | awk '{print $NF}')
-  git checkout "$DEFAULT_BRANCH" 2>/dev/null || git checkout main 2>/dev/null || true
-
-  # Reset all local branches that have a remote counterpart
-  for branch in $(git branch | sed 's/[* ]//'); do
-    if git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
-      echo "  Resetting $branch..."
-      git branch -D "$branch" 2>/dev/null || true
-      git checkout -b "$branch" "origin/$branch" 2>/dev/null || true
-    fi
-  done
-
-  # Return to default branch
-  git checkout "$DEFAULT_BRANCH" 2>/dev/null || true
-  # Clean untracked/ignored files but keep .env
-  git clean -fdx -e .env
+  echo "Performing local git garbage collection to shrink repository..."
+  # Fetch latest from remote (which is now rewritten)
+  git fetch --all --prune
+  git reset --hard "origin/$CURRENT_BRANCH"
   git reflog expire --expire=now --all
-  git gc --prune=now --aggressive
-  echo "Local repository cleaned."
+  git gc --aggressive --prune=now
+  echo "Local repository cleaned. Current size:"
+  du -sh .git 2>/dev/null || du -sh .
+else
+  echo ""
+  echo "Local repository may still contain old objects."
+  echo "To shrink local repo, run: git reflog expire --expire=now --all && git gc --aggressive --prune=now"
+  echo "Or re-clone the repository."
 fi
 
-# --- Purge workflow runs (after everything else) ------------------------------
-if [ "$PURGE_RUNS" = true ]; then
-  if [ "$CONFIRM" != true ] && [ "$LOCAL_ONLY" != true ]; then
-    echo "Warning: --purge-runs without a successful clean may leave inconsistent state."
-  fi
-  echo ""
-  echo "Purging all completed Actions runs..."
-  if [ -x "./scripts/clean-runs.sh" ]; then
-    ./scripts/clean-runs.sh
-  else
-    echo "Error: scripts/clean-runs.sh not found or not executable."
-    exit 1
-  fi
-fi
+echo ""
+echo "✅ Cleanup complete."
