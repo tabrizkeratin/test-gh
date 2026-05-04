@@ -4,6 +4,7 @@ set -euo pipefail
 
 source "${SCRIPT_DIR}/lib/helpers.sh"
 source "${SCRIPT_DIR}/lib/input_parsing.sh"
+source "${SCRIPT_DIR}/lib/quality_map.sh"
 
 run_interactive() {
   check_gh
@@ -126,12 +127,26 @@ run_interactive() {
   $proceed || exit 0
 
   # --- 5. Dispatch ---
+  # Build base command
   CMD=(gh workflow run download-url.yml --repo "$repo"
     --field token="$DOWNLOAD_TOKEN"
     --field urls="$urls"
-    --field quality="$quality"
     --field mode="$mode"
     --field split_size_mb="$split_size")
+
+  # Append quality-related fields
+  if [[ -n "$yt_csv" ]]; then
+    local qfields
+    qfields=$(quality_to_workflow_fields "$quality")
+    if [[ -n "$qfields" ]]; then
+      # Read each line and add as array element
+      while IFS= read -r field_line; do
+        [[ -z "$field_line" ]] && continue
+        CMD+=($field_line)
+      done <<<"$qfields"
+    fi
+  fi
+
   if [[ -n "$cookies" && -f "$cookies" ]]; then
     CMD+=(--field cookies="$(cat "$cookies")")
   fi

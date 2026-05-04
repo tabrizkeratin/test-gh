@@ -4,6 +4,7 @@ set -euo pipefail
 
 source "${SCRIPT_DIR}/lib/helpers.sh"
 source "${SCRIPT_DIR}/lib/input_parsing.sh"
+source "${SCRIPT_DIR}/lib/quality_map.sh"
 
 run_noninteractive() {
   # Defaults
@@ -110,9 +111,21 @@ run_noninteractive() {
   CMD=(gh workflow run download-url.yml --repo "$repo"
     --field token="$DOWNLOAD_TOKEN"
     --field urls="$final_urls"
-    --field quality="$quality"
     --field mode="$mode"
     --field split_size_mb="$split_size")
+
+  # Map quality to workflow fields only if YouTube URLs are present
+  if echo "$final_urls" | grep -qE '(youtube\.com/watch\?v=|youtu\.be/)'; then
+    local qfields
+    qfields=$(quality_to_workflow_fields "$quality")
+    if [[ -n "$qfields" ]]; then
+      while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        CMD+=($line)
+      done <<<"$qfields"
+    fi
+  fi
+
   if [[ -n "$cookies" && -f "$cookies" ]]; then
     CMD+=(--field cookies="$(cat "$cookies")")
   fi
