@@ -53,7 +53,7 @@ run_interactive() {
   yt_csv=$(extract_youtube_urls "$urls")
   if [[ -n "$yt_csv" ]]; then
     if $GUM_AVAILABLE; then
-      quality=$(gum choose --header "Select video quality:" "best" "1080p" "720p" "480p" "audio")
+      quality=$(gum choose --header "Select video quality:" "best" "1080p" "720p" "480p" "360p" "audio")
     else
       echo ""
       echo "Select quality:"
@@ -61,7 +61,8 @@ run_interactive() {
       echo "  2) 1080p"
       echo "  3) 720p"
       echo "  4) 480p"
-      echo "  5) audio"
+      echo "  5) 360p"
+      echo "  6) audio"
       local c
       while :; do
         read -rp "Choice (1-5): " c
@@ -83,6 +84,10 @@ run_interactive() {
           break
           ;;
         5)
+          quality="360p"
+          break
+          ;;
+        6)
           quality="audio"
           break
           ;;
