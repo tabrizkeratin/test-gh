@@ -95,6 +95,11 @@ jobs:
 
       - name: Create work directory
         run: mkdir -p work
+      
+      - name: Make scripts executable
+        run: |
+          chmod +x scripts/*.sh 2>/dev/null || true
+          chmod +x scripts/*.py 2>/dev/null || true
 
       - name: Install common tools
         run: |
