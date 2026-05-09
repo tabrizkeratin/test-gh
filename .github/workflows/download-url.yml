@@ -159,8 +159,8 @@ jobs:
               fi
             else
               aria2c --max-connection-per-server=16 --split=16 --min-split-size=1M \
-                    --console-log-level=error --summary-interval=0 \
-                    --out="downloaded_file_$(basename "$url")" "$url"
+                     --console-log-level=error --summary-interval=0 \
+                     --out="downloaded_file_$(basename "$url")" "$url"
             fi
           done <<< "${{ steps.url_prep.outputs.urls }}"
           rm -f cookies.txt *.part
@@ -168,43 +168,31 @@ jobs:
       # ------------------------------------------------------------
       # TYPE: MHTML (webpage archive)
       # ------------------------------------------------------------
-      - name: Set up Python for MHTML
-        if: github.event.inputs.download_type == 'mhtml'
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-
-      - name: Install pyppeteer for MHTML
-        if: github.event.inputs.download_type == 'mhtml'
-        run: pip install pyppeteer
-
-      - name: Run MHTML downloader (inside work/)
+      - name: Download MHTML
         if: github.event.inputs.download_type == 'mhtml'
         run: |
+          python3 -m pip install pyppeteer
           cd work
-          cat > save_mhtml.py << 'EOF'
-          import asyncio, sys, os
-          from pyppeteer import launch
-          async def main():
-              url = sys.argv[1]
-              title = sys.argv[2] if len(sys.argv) > 2 else None
-              browser = await launch(headless=True, args=['--no-sandbox'])
-              page = await browser.newPage()
-              await page.goto(url, {'waitUntil': 'networkidle2'})
-              cdp = await page.target.createCDPSession()
-              data = await cdp.send('Page.captureSnapshot', {'format': 'mhtml'})
-              if title:
-                  filename = f"{title}.mhtml"
-              else:
-                  filename = url.split('//')[-1].replace('/', '_').replace('?', '_') + ".mhtml"
-              with open(filename, 'w', encoding='utf-8') as f:
-                  f.write(data['data'])
-              await browser.close()
-              print(filename)
-          asyncio.get_event_loop().run_until_complete(main())
-          EOF
-          TITLE="${{ github.event.inputs.title }}"
-          python save_mhtml.py "${{ github.event.inputs.urls }}" "$TITLE"
+          python3 -c '
+import asyncio, sys, os
+from pyppeteer import launch
+
+async def main():
+    url = sys.argv[1]
+    title = sys.argv[2] if len(sys.argv) > 2 else None
+    browser = await launch(headless=True, args=["--no-sandbox"])
+    page = await browser.newPage()
+    await page.goto(url, {"waitUntil": "networkidle2"})
+    cdp = await page.target.createCDPSession()
+    data = await cdp.send("Page.captureSnapshot", {"format": "mhtml"})
+    filename = f"{title}.mhtml" if title else url.split("//")[-1].replace("/", "_").replace("?", "_") + ".mhtml"
+    with open(filename, "w", encoding="utf-8") as f:
+        f.write(data["data"])
+    await browser.close()
+    print(filename)
+
+asyncio.get_event_loop().run_until_complete(main())
+' "${{ github.event.inputs.urls }}" "${{ github.event.inputs.title }}"
 
       # ------------------------------------------------------------
       # TYPE: Google Play APK
@@ -235,6 +223,10 @@ jobs:
           [[ "$MERGE" == "true" ]] && CMD="$CMD -m"
           $CMD
 
+      - name: Clean up gplay-apk-downloader
+        if: github.event.inputs.download_type == 'googleplay'
+        run: rm -rf gplay-apk-downloader
+
       # ------------------------------------------------------------
       # Upload the entire work/ directory
       # ------------------------------------------------------------
@@ -243,16 +235,6 @@ jobs:
         with:
           name: downloaded-files
           path: work/
-          retention-days: 1
-
-      # ------------------------------------------------------------
-      # Upload staging directory as artifact
-      # ------------------------------------------------------------
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: downloaded-files
-          path: staging/
           retention-days: 1
 
   finalize:
