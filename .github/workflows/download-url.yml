@@ -202,20 +202,28 @@ jobs:
         with:
           path: artifacts
 
-      - name: Move files to downloads/
+      - name: Create timestamped subdirectory
+        id: timestamp
         run: |
-          mkdir -p downloads
-          find artifacts -type f -exec cp {} downloads/ \;
-          if [ -z "$(ls -A downloads 2>/dev/null)" ]; then
+          TS=$(date +'%Y%m%d_%H%M%S')
+          echo "subdir=downloads/$TS" >> $GITHUB_OUTPUT
+          mkdir -p "downloads/$TS"
+
+      - name: Move files to timestamped subdirectory
+        run: |
+          TARGET="${{ steps.timestamp.outputs.subdir }}"
+          find artifacts -type f -exec cp {} "$TARGET/" \;
+          if [ -z "$(ls -A "$TARGET" 2>/dev/null)" ]; then
             echo "No files found in artifacts."
-            touch downloads/.placeholder
+            touch "$TARGET/.placeholder"
           fi
 
       - name: Split large files (if split_size_mb > 0)
         if: github.event.inputs.split_size_mb != '0'
         run: |
           SPLIT_SIZE=${{ github.event.inputs.split_size_mb }}
-          cd downloads
+          TARGET="${{ steps.timestamp.outputs.subdir }}"
+          cd "$TARGET"
           if [[ -f ".placeholder" ]]; then
             echo "No files to split."
             exit 0
@@ -228,26 +236,22 @@ jobs:
             fi
           done
 
-      - name: Zip all files if mode is download-zip and no splitting occurred
-        if: github.event.inputs.mode == 'download-zip' || (github.event.inputs.mode == 'auto' && needs.download.result = 'success')
+      - name: Zip files if appropriate
+        if: github.event.inputs.mode == 'download-zip' || (github.event.inputs.mode == 'auto' && needs.download.result == 'success')
         run: |
-          cd downloads
-          if [[ -f ".placeholder" ]]; then
-            echo "No files to zip."
-            exit 0
-          fi
-
+          TARGET="${{ steps.timestamp.outputs.subdir }}"
+          cd "$TARGET"
           # Skip if split parts exist
           if ls *.part.* 1> /dev/null 2>&1; then
             echo "Split parts detected. Not zipping (would exceed GitHub limit)."
             exit 0
           fi
 
-          # Count files (excluding any directory)
-          file_count=$(find . -maxdepth 1 -type f | wc -l)
+          # Count files (excluding .placeholder)
+          file_count=$(find . -maxdepth 1 -type f ! -name ".placeholder" | wc -l)
           total_size=$(du -sb . | cut -f1)
 
-          # In auto mode: only zip if more than one file AND total size < 100MB
+          # In auto mode: only zip if more than one file
           if [[ "${{ github.event.inputs.mode }}" == "auto" ]]; then
             if [[ $file_count -le 1 ]]; then
               echo "Only one file in auto mode – skipping zip."
@@ -262,20 +266,17 @@ jobs:
 
           echo "Zipping $file_count files (total ${total_size} bytes)"
           zip -r all-files.zip .
-          find . -type f ! -name "all-files.zip" -delete
-          mv all-files.zip ../
-          cd ..
-          rm -rf downloads
-          mkdir downloads
-          mv all-files.zip downloads/
+          # Remove original files, keep only the zip and .placeholder
+          find . -type f ! -name "all-files.zip" ! -name ".placeholder" -delete
 
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          TIMESTAMP="${{ steps.timestamp.outputs.subdir }}"
           git add downloads/
           if ! git diff --cached --quiet; then
-            git commit -m "${{ github.event.inputs.commit_msg || 'Add downloaded files' }} [skip ci]"
+            git commit -m "Add downloaded files from run at ${TIMESTAMP#downloads/} [skip ci]"
             git push
           else
             echo "No changes to commit."
