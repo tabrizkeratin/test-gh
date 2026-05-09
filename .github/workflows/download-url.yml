@@ -93,6 +93,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Create work directory
+        run: mkdir -p work
+
       - name: Install common tools
         run: |
           sudo apt-get update -qq
@@ -110,7 +113,6 @@ jobs:
           echo "urls<<EOF" >> $GITHUB_OUTPUT
           echo "$URLS" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
-          echo "count=$(echo "$URLS" | wc -l)" >> $GITHUB_OUTPUT
 
       # ------------------------------------------------------------
       # TYPE: URL (YouTube or direct)
@@ -130,15 +132,16 @@ jobs:
           COOKIES_TXT: ${{ secrets.YT_COOKIES }}
         run: |
           if [[ -n "$COOKIES_TXT" ]]; then
-            echo "$COOKIES_TXT" > cookies.txt
-            echo "cookie_file=cookies.txt" >> $GITHUB_OUTPUT
+            echo "$COOKIES_TXT" > work/cookies.txt
+            echo "cookie_file=work/cookies.txt" >> $GITHUB_OUTPUT
           else
             echo "cookie_file=" >> $GITHUB_OUTPUT
           fi
 
-      - name: Download URLs
+      - name: Download URLs (inside work/)
         if: github.event.inputs.download_type == 'url'
         run: |
+          cd work
           while IFS= read -r url; do
             [[ -z "$url" ]] && continue
             echo "Downloading: $url"
@@ -156,8 +159,8 @@ jobs:
               fi
             else
               aria2c --max-connection-per-server=16 --split=16 --min-split-size=1M \
-                     --console-log-level=error --summary-interval=0 \
-                     --out="downloaded_file_$(basename "$url")" "$url"
+                    --console-log-level=error --summary-interval=0 \
+                    --out="downloaded_file_$(basename "$url")" "$url"
             fi
           done <<< "${{ steps.url_prep.outputs.urls }}"
           rm -f cookies.txt *.part
@@ -175,9 +178,10 @@ jobs:
         if: github.event.inputs.download_type == 'mhtml'
         run: pip install pyppeteer
 
-      - name: Run MHTML downloader
+      - name: Run MHTML downloader (inside work/)
         if: github.event.inputs.download_type == 'mhtml'
         run: |
+          cd work
           cat > save_mhtml.py << 'EOF'
           import asyncio, sys, os
           from pyppeteer import launch
@@ -219,28 +223,36 @@ jobs:
           cd gplay-apk-downloader
           echo "y" | ./gplay auth
 
-      - name: Download APK from Google Play
+      - name: Download APK from Google Play (into work/)
         if: github.event.inputs.download_type == 'googleplay'
         run: |
           cd gplay-apk-downloader
           ARCH="${{ github.event.inputs.architecture }}"
           MERGE="${{ github.event.inputs.merge_splits }}"
-          OUTPUT_DIR="../downloads_temp"
+          OUTPUT_DIR="../work"
           mkdir -p "$OUTPUT_DIR"
           CMD="./gplay download ${{ github.event.inputs.package_name }} -a $ARCH -o $OUTPUT_DIR"
           [[ "$MERGE" == "true" ]] && CMD="$CMD -m"
           $CMD
 
       # ------------------------------------------------------------
-      # Upload all downloaded files as a single artifact
+      # Upload the entire work/ directory
       # ------------------------------------------------------------
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: downloaded-files
-          path: |
-            *.mp4 *.webm *.mkv *.mhtml downloaded_file_* *.apk *.zip
-            downloads_temp/
+          path: work/
+          retention-days: 1
+
+      # ------------------------------------------------------------
+      # Upload staging directory as artifact
+      # ------------------------------------------------------------
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: downloaded-files
+          path: staging/
           retention-days: 1
 
   finalize:
