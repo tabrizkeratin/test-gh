@@ -3,11 +3,37 @@ name: Download URL(s) with direct & YouTube support
 on:
   workflow_dispatch:
     inputs:
-      urls:
-        description: "URLs (space or comma separated)"
+      download_type:
+        description: "Type of download"
         required: true
+        default: "url"
+        type: choice
+        options:
+          - url
+          - mhtml
+          - googleplay
+      urls:
+        description: "URLs (space or comma separated) – required for type=url / type=mhtml"
+        required: false
+      package_name:
+        description: "Google Play package name – required for type=googleplay"
+        required: false
+      architecture:
+        description: "Target architecture (googleplay)"
+        required: false
+        default: "arm64"
+        type: choice
+        options: ["arm64", "armv7"]
+      merge_splits:
+        description: "Merge split APKs (googleplay)"
+        required: false
+        type: boolean
+        default: true
+      title:
+        description: "Optional title for MHTML file (no spaces/special chars)"
+        required: false
       mode:
-        description: "Mode: download (single) or download-zip (multiple)"
+        description: "Mode: auto (smart zip), download-full (no zip), download-zip (force zip)"
         default: "auto"
       split_size_mb:
         description: "Split files larger than this MB (0 = never split)"
@@ -15,34 +41,29 @@ on:
       token:
         description: "Download token (matches repository secret)"
         required: true
+      # YouTube-specific inputs (only used when download_type == 'url' and URL is YouTube)
       yt_format_spec:
-        description: "yt-dlp format specifier (e.g., bestvideo[height<=720]+bestaudio)"
+        description: "yt-dlp format specifier"
         default: "bestvideo+bestaudio"
         required: false
       yt_extract_audio:
         description: "Extract audio only (true/false)"
         default: "false"
-        required: false
       yt_audio_format:
-        description: "Audio container when extracting audio (mp3, m4a, opus)"
+        description: "Audio container when extracting audio"
         default: "mp3"
-        required: false
       yt_subs:
-        description: "Subtitle languages (comma‑separated, e.g., en,fr)"
+        description: "Subtitle languages (comma‑separated)"
         default: ""
-        required: false
       yt_embed_subs:
-        description: "Embed subtitles into file (true/false)"
+        description: "Embed subtitles into file"
         default: "false"
-        required: false
       yt_embed_thumbnail:
-        description: "Embed thumbnail (true/false)"
+        description: "Embed thumbnail"
         default: "false"
-        required: false
       yt_remux:
-        description: "Remux video for better compatibility (true/false)"
+        description: "Remux video for better compatibility"
         default: "false"
-        required: false
 
 concurrency:
   group: download-${{ github.workflow }}-${{ github.ref }}
@@ -64,52 +85,46 @@ jobs:
             exit 1
           fi
 
-  setup-matrix:
+  download:
     needs: validate
     runs-on: ubuntu-latest
     if: needs.validate.outputs.token_valid == 'true'
-    outputs:
-      urls_json: ${{ steps.prepare.outputs.urls_json }}
     steps:
-      - name: Prepare URL matrix
-        id: prepare
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install common tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq jq ffmpeg aria2 curl git python3 python3-pip unzip
+
+      # ------------------------------------------------------------
+      # Prepare URL list (only for type=url)
+      # ------------------------------------------------------------
+      - name: Prepare URL list
+        id: url_prep
+        if: github.event.inputs.download_type == 'url'
         run: |
           INPUT_URLS="${{ github.event.inputs.urls }}"
           URLS=$(echo "$INPUT_URLS" | tr ',' ' ' | xargs -n1 | sort -u)
-          JSON=$(echo "$URLS" | jq -R -s -c 'split("\n") | map(select(length > 0))')
-          echo "urls_json=$JSON" >> $GITHUB_OUTPUT
+          echo "urls<<EOF" >> $GITHUB_OUTPUT
+          echo "$URLS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "count=$(echo "$URLS" | wc -l)" >> $GITHUB_OUTPUT
 
-  download:
-    needs: setup-matrix
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        url: ${{ fromJson(needs.setup-matrix.outputs.urls_json) }}
-      fail-fast: false
-    steps:
-      - name: Install tools (yt-dlp binary + Bun + ffmpeg)
-        shell: bash
+      # ------------------------------------------------------------
+      # TYPE: URL (YouTube or direct)
+      # ------------------------------------------------------------
+      - name: Install yt-dlp & bun (for YouTube)
+        if: github.event.inputs.download_type == 'url'
         run: |
-          set -euo pipefail
-
-          # yt-dlp (direct binary from GitHub releases)
-          if ! command -v yt-dlp &> /dev/null; then
-            sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
-                      -o /usr/local/bin/yt-dlp
-            sudo chmod a+rx /usr/local/bin/yt-dlp
-          fi
-
-          # Bun (fast JavaScript runtime, replaces Deno)
-          if ! command -v bun &> /dev/null; then
-            curl -fsSL https://bun.sh/install | bash
-            echo "$HOME/.bun/bin" >> $GITHUB_PATH
-          fi
-
-          # ffmpeg, aria2, jq
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq jq ffmpeg aria2
+          sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
+          sudo chmod a+rx /usr/local/bin/yt-dlp
+          curl -fsSL https://bun.sh/install | bash
+          echo "$HOME/.bun/bin" >> $GITHUB_PATH
 
       - name: Prepare cookies (if secret exists)
+        if: github.event.inputs.download_type == 'url'
         id: cookies
         env:
           COOKIES_TXT: ${{ secrets.YT_COOKIES }}
@@ -121,70 +136,111 @@ jobs:
             echo "cookie_file=" >> $GITHUB_OUTPUT
           fi
 
-      - name: Detect if YouTube
-        id: detect
+      - name: Download URLs
+        if: github.event.inputs.download_type == 'url'
         run: |
-          if echo "${{ matrix.url }}" | grep -Eq '(youtube\.com/watch\?v=|youtu\.be/)'; then
-            echo "is_youtube=true" >> $GITHUB_OUTPUT
-          else
-            echo "is_youtube=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Download with yt-dlp (YouTube + Bun runtime)
-        if: steps.detect.outputs.is_youtube == 'true'
-        run: |
-          # Base command with Bun runtime
-          CMD="yt-dlp --no-progress --js-runtimes bun --remote-components ejs:npm"
-          if [[ -n "${{ steps.cookies.outputs.cookie_file }}" ]]; then
-            CMD="$CMD --cookies ${{ steps.cookies.outputs.cookie_file }}"
-          fi
-          CMD="$CMD -f '${{ github.event.inputs.yt_format_spec }}'"
-
-          if [[ "${{ github.event.inputs.yt_extract_audio }}" == "true" ]]; then
-            CMD="$CMD --extract-audio --audio-format ${{ github.event.inputs.yt_audio_format }}"
-          fi
-
-          if [[ -n "${{ github.event.inputs.yt_subs }}" ]]; then
-            CMD="$CMD --write-subs --sub-langs ${{ github.event.inputs.yt_subs }}"
-            if [[ "${{ github.event.inputs.yt_embed_subs }}" == "true" ]]; then
-              CMD="$CMD --embed-subs"
+          while IFS= read -r url; do
+            [[ -z "$url" ]] && continue
+            echo "Downloading: $url"
+            if echo "$url" | grep -qE '(youtube\.com/watch\?v=|youtu\.be/)'; then
+              CMD="yt-dlp --no-progress --js-runtimes bun --remote-components ejs:npm"
+              [[ -n "${{ steps.cookies.outputs.cookie_file }}" ]] && CMD="$CMD --cookies ${{ steps.cookies.outputs.cookie_file }}"
+              CMD="$CMD -f '${{ github.event.inputs.yt_format_spec }}'"
+              [[ "${{ github.event.inputs.yt_extract_audio }}" == "true" ]] && CMD="$CMD --extract-audio --audio-format ${{ github.event.inputs.yt_audio_format }}"
+              [[ -n "${{ github.event.inputs.yt_subs }}" ]] && CMD="$CMD --write-subs --sub-langs ${{ github.event.inputs.yt_subs }}"
+              [[ "${{ github.event.inputs.yt_embed_subs }}" == "true" ]] && CMD="$CMD --embed-subs"
+              [[ "${{ github.event.inputs.yt_embed_thumbnail }}" == "true" ]] && CMD="$CMD --embed-thumbnail"
+              eval $CMD "$url"
+              if [[ "${{ github.event.inputs.yt_remux }}" == "true" ]]; then
+                for f in *.mp4 *.webm *.mkv; do [ -f "$f" ] && ffmpeg -i "$f" -c copy "fixed_$f" -y && mv "fixed_$f" "$f"; done
+              fi
+            else
+              aria2c --max-connection-per-server=16 --split=16 --min-split-size=1M \
+                     --console-log-level=error --summary-interval=0 \
+                     --out="downloaded_file_$(basename "$url")" "$url"
             fi
-          fi
+          done <<< "${{ steps.url_prep.outputs.urls }}"
+          rm -f cookies.txt *.part
 
-          if [[ "${{ github.event.inputs.yt_embed_thumbnail }}" == "true" ]]; then
-            CMD="$CMD --embed-thumbnail"
-          fi
+      # ------------------------------------------------------------
+      # TYPE: MHTML (webpage archive)
+      # ------------------------------------------------------------
+      - name: Set up Python for MHTML
+        if: github.event.inputs.download_type == 'mhtml'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
 
-          echo "Running: $CMD ${{ matrix.url }}"
-          eval $CMD "${{ matrix.url }}"
+      - name: Install pyppeteer for MHTML
+        if: github.event.inputs.download_type == 'mhtml'
+        run: pip install pyppeteer
 
-          # Optional remux
-          if [[ "${{ github.event.inputs.yt_remux }}" == "true" ]]; then
-            for f in *.mp4 *.webm *.mkv; do
-              [ -f "$f" ] || continue
-              echo "Remuxing $f ..."
-              ffmpeg -i "$f" -c copy "fixed_$f" -y && mv "fixed_$f" "$f"
-            done
-          fi
-
-          # Clean temporary files
-          rm -f cookies.txt
-          rm -f *.part
-
-      - name: Download with aria2c (non-YouTube)
-        if: steps.detect.outputs.is_youtube == 'false'
+      - name: Run MHTML downloader
+        if: github.event.inputs.download_type == 'mhtml'
         run: |
-          aria2c --max-connection-per-server=16 --split=16 --min-split-size=1M \
-                 --console-log-level=error --summary-interval=0 \
-                 --out="downloaded_file" "${{ matrix.url }}"
+          cat > save_mhtml.py << 'EOF'
+          import asyncio, sys, os
+          from pyppeteer import launch
+          async def main():
+              url = sys.argv[1]
+              title = sys.argv[2] if len(sys.argv) > 2 else None
+              browser = await launch(headless=True, args=['--no-sandbox'])
+              page = await browser.newPage()
+              await page.goto(url, {'waitUntil': 'networkidle2'})
+              cdp = await page.target.createCDPSession()
+              data = await cdp.send('Page.captureSnapshot', {'format': 'mhtml'})
+              if title:
+                  filename = f"{title}.mhtml"
+              else:
+                  filename = url.split('//')[-1].replace('/', '_').replace('?', '_') + ".mhtml"
+              with open(filename, 'w', encoding='utf-8') as f:
+                  f.write(data['data'])
+              await browser.close()
+              print(filename)
+          asyncio.get_event_loop().run_until_complete(main())
+          EOF
+          TITLE="${{ github.event.inputs.title }}"
+          python save_mhtml.py "${{ github.event.inputs.urls }}" "$TITLE"
 
+      # ------------------------------------------------------------
+      # TYPE: Google Play APK
+      # ------------------------------------------------------------
+      - name: Install Java and gplay-apk-downloader
+        if: github.event.inputs.download_type == 'googleplay'
+        run: |
+          sudo apt-get install -y openjdk-17-jre-headless apksigner
+          git clone https://github.com/alltechdev/gplay-apk-downloader.git
+          cd gplay-apk-downloader
+          ./setup.sh
+
+      - name: Authenticate with Google Play
+        if: github.event.inputs.download_type == 'googleplay'
+        run: |
+          cd gplay-apk-downloader
+          echo "y" | ./gplay auth
+
+      - name: Download APK from Google Play
+        if: github.event.inputs.download_type == 'googleplay'
+        run: |
+          cd gplay-apk-downloader
+          ARCH="${{ github.event.inputs.architecture }}"
+          MERGE="${{ github.event.inputs.merge_splits }}"
+          OUTPUT_DIR="../downloads_temp"
+          mkdir -p "$OUTPUT_DIR"
+          CMD="./gplay download ${{ github.event.inputs.package_name }} -a $ARCH -o $OUTPUT_DIR"
+          [[ "$MERGE" == "true" ]] && CMD="$CMD -m"
+          $CMD
+
+      # ------------------------------------------------------------
+      # Upload all downloaded files as a single artifact
+      # ------------------------------------------------------------
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: download-${{ strategy.job-index }}
+          name: downloaded-files
           path: |
-            *
-            !cookies.txt
+            *.mp4 *.webm *.mkv *.mhtml downloaded_file_* *.apk *.zip
+            downloads_temp/
           retention-days: 1
 
   finalize:
@@ -214,7 +270,6 @@ jobs:
           TARGET="${{ steps.timestamp.outputs.subdir }}"
           find artifacts -type f -exec cp {} "$TARGET/" \;
           if [ -z "$(ls -A "$TARGET" 2>/dev/null)" ]; then
-            echo "No files found in artifacts."
             touch "$TARGET/.placeholder"
           fi
 
@@ -230,7 +285,6 @@ jobs:
           fi
           for f in *; do
             if [[ -f "$f" ]] && [[ $(stat -c%s "$f") -gt $((SPLIT_SIZE * 1048576)) ]]; then
-              echo "Splitting $f (size > ${SPLIT_SIZE}MB)"
               split -b ${SPLIT_SIZE}M "$f" "${f}.part."
               rm "$f"
             fi
@@ -241,32 +295,22 @@ jobs:
         run: |
           TARGET="${{ steps.timestamp.outputs.subdir }}"
           cd "$TARGET"
-          # Skip if split parts exist
           if ls *.part.* 1> /dev/null 2>&1; then
-            echo "Split parts detected. Not zipping (would exceed GitHub limit)."
+            echo "Split parts detected. Not zipping."
             exit 0
           fi
-
-          # Count files (excluding .placeholder)
           file_count=$(find . -maxdepth 1 -type f ! -name ".placeholder" | wc -l)
           total_size=$(du -sb . | cut -f1)
-
-          # In auto mode: only zip if more than one file
-          if [[ "${{ github.event.inputs.mode }}" == "auto" ]]; then
-            if [[ $file_count -le 1 ]]; then
-              echo "Only one file in auto mode – skipping zip."
-              exit 0
-            fi
-          fi
-
-          if [[ $total_size -gt 104857600 ]]; then
-            echo "Total size (${total_size} bytes) exceeds 100MB. Skipping zip."
+          if [[ "${{ github.event.inputs.mode }}" == "auto" && $file_count -le 1 ]]; then
+            echo "Only one file in auto mode – skipping zip."
             exit 0
           fi
-
+          if [[ $total_size -gt 104857600 ]]; then
+            echo "Total size exceeds 100MB. Skipping zip."
+            exit 0
+          fi
           echo "Zipping $file_count files (total ${total_size} bytes)"
           zip -r all-files.zip .
-          # Remove original files, keep only the zip and .placeholder
           find . -type f ! -name "all-files.zip" ! -name ".placeholder" -delete
 
       - name: Commit and push
