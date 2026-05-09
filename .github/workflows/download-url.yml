@@ -165,67 +165,29 @@ jobs:
           done <<< "${{ steps.url_prep.outputs.urls }}"
           rm -f cookies.txt *.part
 
-      # ------------------------------------------------------------
-      # TYPE: MHTML (webpage archive)
-      # ------------------------------------------------------------
+      - name: Install pyppeteer
+        if: github.event.inputs.download_type == 'mhtml'
+        run: python3 -m pip install pyppeteer
+
       - name: Download MHTML
         if: github.event.inputs.download_type == 'mhtml'
         run: |
-          python3 -m pip install pyppeteer
           cd work
-          python3 -c '
-import asyncio, sys, os
-from pyppeteer import launch
-
-async def main():
-    url = sys.argv[1]
-    title = sys.argv[2] if len(sys.argv) > 2 else None
-    browser = await launch(headless=True, args=["--no-sandbox"])
-    page = await browser.newPage()
-    await page.goto(url, {"waitUntil": "networkidle2"})
-    cdp = await page.target.createCDPSession()
-    data = await cdp.send("Page.captureSnapshot", {"format": "mhtml"})
-    filename = f"{title}.mhtml" if title else url.split("//")[-1].replace("/", "_").replace("?", "_") + ".mhtml"
-    with open(filename, "w", encoding="utf-8") as f:
-        f.write(data["data"])
-    await browser.close()
-    print(filename)
-
-asyncio.get_event_loop().run_until_complete(main())
-' "${{ github.event.inputs.urls }}" "${{ github.event.inputs.title }}"
+          python3 ${{ github.workspace }}/scripts/save_mhtml.py \
+            "${{ github.event.inputs.urls }}" \
+            "${{ github.event.inputs.title }}"
 
       # ------------------------------------------------------------
       # TYPE: Google Play APK
       # ------------------------------------------------------------
-      - name: Install Java and gplay-apk-downloader
-        if: github.event.inputs.download_type == 'googleplay'
-        run: |
-          sudo apt-get install -y openjdk-17-jre-headless apksigner
-          git clone https://github.com/alltechdev/gplay-apk-downloader.git
-          cd gplay-apk-downloader
-          ./setup.sh
-
-      - name: Authenticate with Google Play
-        if: github.event.inputs.download_type == 'googleplay'
-        run: |
-          cd gplay-apk-downloader
-          echo "y" | ./gplay auth
-
       - name: Download APK from Google Play (into work/)
         if: github.event.inputs.download_type == 'googleplay'
         run: |
-          cd gplay-apk-downloader
-          ARCH="${{ github.event.inputs.architecture }}"
-          MERGE="${{ github.event.inputs.merge_splits }}"
-          OUTPUT_DIR="../work"
-          mkdir -p "$OUTPUT_DIR"
-          CMD="./gplay download ${{ github.event.inputs.package_name }} -a $ARCH -o $OUTPUT_DIR"
-          [[ "$MERGE" == "true" ]] && CMD="$CMD -m"
-          $CMD
-
-      - name: Clean up gplay-apk-downloader
-        if: github.event.inputs.download_type == 'googleplay'
-        run: rm -rf gplay-apk-downloader
+          ${{ github.workspace }}/scripts/download_googleplay.sh \
+            --package "${{ github.event.inputs.package_name }}" \
+            --arch "${{ github.event.inputs.architecture }}" \
+            --merge "${{ github.event.inputs.merge_splits }}" \
+            --output "${{ github.workspace }}/work"
 
       # ------------------------------------------------------------
       # Upload the entire work/ directory
