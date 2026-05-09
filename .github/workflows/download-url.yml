@@ -138,32 +138,20 @@ jobs:
             echo "cookie_file=" >> $GITHUB_OUTPUT
           fi
 
-      - name: Download URLs (inside work/)
+      - name: Download URLs
         if: github.event.inputs.download_type == 'url'
         run: |
           cd work
-          while IFS= read -r url; do
-            [[ -z "$url" ]] && continue
-            echo "Downloading: $url"
-            if echo "$url" | grep -qE '(youtube\.com/watch\?v=|youtu\.be/)'; then
-              CMD="yt-dlp --no-progress --js-runtimes bun --remote-components ejs:npm"
-              [[ -n "${{ steps.cookies.outputs.cookie_file }}" ]] && CMD="$CMD --cookies ${{ steps.cookies.outputs.cookie_file }}"
-              CMD="$CMD -f '${{ github.event.inputs.yt_format_spec }}'"
-              [[ "${{ github.event.inputs.yt_extract_audio }}" == "true" ]] && CMD="$CMD --extract-audio --audio-format ${{ github.event.inputs.yt_audio_format }}"
-              [[ -n "${{ github.event.inputs.yt_subs }}" ]] && CMD="$CMD --write-subs --sub-langs ${{ github.event.inputs.yt_subs }}"
-              [[ "${{ github.event.inputs.yt_embed_subs }}" == "true" ]] && CMD="$CMD --embed-subs"
-              [[ "${{ github.event.inputs.yt_embed_thumbnail }}" == "true" ]] && CMD="$CMD --embed-thumbnail"
-              eval $CMD "$url"
-              if [[ "${{ github.event.inputs.yt_remux }}" == "true" ]]; then
-                for f in *.mp4 *.webm *.mkv; do [ -f "$f" ] && ffmpeg -i "$f" -c copy "fixed_$f" -y && mv "fixed_$f" "$f"; done
-              fi
-            else
-              aria2c --max-connection-per-server=16 --split=16 --min-split-size=1M \
-                     --console-log-level=error --summary-interval=0 \
-                     --out="downloaded_file_$(basename "$url")" "$url"
-            fi
-          done <<< "${{ steps.url_prep.outputs.urls }}"
-          rm -f cookies.txt *.part
+          ${{ github.workspace }}/scripts/download_urls.sh \
+            --urls ${{ steps.url_prep.outputs.urls }} \
+            --format-spec "${{ github.event.inputs.yt_format_spec }}" \
+            --extract-audio "${{ github.event.inputs.yt_extract_audio }}" \
+            --audio-format "${{ github.event.inputs.yt_audio_format }}" \
+            --subs "${{ github.event.inputs.yt_subs }}" \
+            --embed-subs "${{ github.event.inputs.yt_embed_subs }}" \
+            --embed-thumbnail "${{ github.event.inputs.yt_embed_thumbnail }}" \
+            --remux "${{ github.event.inputs.yt_remux }}" \
+            ${COOKIES_ARG}
 
       - name: Install pyppeteer
         if: github.event.inputs.download_type == 'mhtml'
