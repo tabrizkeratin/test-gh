@@ -229,37 +229,41 @@ jobs:
           done
 
       - name: Zip all files if mode is download-zip and no splitting occurred
-        if: github.event.inputs.mode == 'download-zip' || (github.event.inputs.mode == 'auto' && needs.download.result != 'skipped')
+        if: github.event.inputs.mode == 'download-zip' || (github.event.inputs.mode == 'auto' && needs.download.result = 'success')
         run: |
           cd downloads
           if [[ -f ".placeholder" ]]; then
             echo "No files to zip."
             exit 0
           fi
+
           # Skip if split parts exist
           if ls *.part.* 1> /dev/null 2>&1; then
-            echo "Split parts detected. Skipping zip to avoid exceeding 100MB limit."
-            echo "Files will be committed individually (split parts)."
+            echo "Split parts detected. Not zipping (would exceed GitHub limit)."
             exit 0
           fi
-          # Check total size
-          total_size=0
-          for f in *; do
-            if [[ -f "$f" ]]; then
-              size=$(stat -c%s "$f")
-              total_size=$((total_size + size))
+
+          # Count files (excluding any directory)
+          file_count=$(find . -maxdepth 1 -type f | wc -l)
+          total_size=$(du -sb . | cut -f1)
+
+          # In auto mode: only zip if more than one file AND total size < 100MB
+          if [[ "${{ github.event.inputs.mode }}" == "auto" ]]; then
+            if [[ $file_count -le 1 ]]; then
+              echo "Only one file in auto mode – skipping zip."
+              exit 0
             fi
-          done
+          fi
+
           if [[ $total_size -gt 104857600 ]]; then
-            echo "Total size of files (${total_size} bytes) exceeds GitHub's 100MB limit."
-            echo "Skipping zip and committing files individually."
+            echo "Total size (${total_size} bytes) exceeds 100MB. Skipping zip."
             exit 0
           fi
-          echo "Zipping all files in downloads/ (total size < 100MB)"
+
+          echo "Zipping $file_count files (total ${total_size} bytes)"
           zip -r all-files.zip .
-          # Remove original files except the zip
           find . -type f ! -name "all-files.zip" -delete
-          mv all-files.zip ../all-files.zip
+          mv all-files.zip ../
           cd ..
           rm -rf downloads
           mkdir downloads

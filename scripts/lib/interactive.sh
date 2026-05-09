@@ -47,56 +47,69 @@ run_interactive() {
     ;;
   esac
 
-  # --- 2. Quality (only if YouTube present) ---
+  # --- 2. Quality & YouTube options ---
   local quality="best"
+  local yt_format_spec="" yt_extract_audio=false yt_audio_format="mp3"
+  local yt_subs="" yt_embed_subs=false yt_embed_thumbnail=false yt_remux=false
+
   local yt_csv
   yt_csv=$(extract_youtube_urls "$urls")
   if [[ -n "$yt_csv" ]]; then
     if $GUM_AVAILABLE; then
-      quality=$(gum choose --header "Select video quality:" "best" "1080p" "720p" "480p" "360p" "audio")
+      # Choose simple quality or custom format spec?
+      local advanced
+      advanced=$(gum choose --header "YouTube setup:" "Simple quality preset" "Custom yt-dlp format spec")
+      if [[ "$advanced" == "Simple quality preset" ]]; then
+        quality=$(gum choose --header "Select video quality:" "best" "1080p" "720p" "480p" "360p" "audio")
+        if [[ "$quality" == "audio" ]]; then
+          yt_extract_audio=true
+          yt_audio_format=$(gum choose --header "Audio format:" "mp3" "m4a" "opus")
+        fi
+      else
+        yt_format_spec=$(gum input --placeholder 'Example: "bestvideo[height<=720]+bestaudio"' --value="")
+        # If format spec is empty, fall back to best
+        [[ -z "$yt_format_spec" ]] && yt_format_spec="bestvideo+bestaudio"
+      fi
+
+      # Extra options (subtitles, thumbnail, remux)
+      if gum confirm "Add subtitles?"; then
+        yt_subs=$(gum input --placeholder "Language codes: en,fr,de" --value="")
+        if [[ -n "$yt_subs" ]] && gum confirm "Embed subtitles?"; then
+          yt_embed_subs=true
+        fi
+      fi
+      gum confirm "Embed thumbnail?" && yt_embed_thumbnail=true
+      gum confirm "Remux video (ffmpeg copy)?" && yt_remux=true
     else
+      # Plain read fallback
       echo ""
-      echo "Select quality:"
-      echo "  1) best"
-      echo "  2) 1080p"
-      echo "  3) 720p"
-      echo "  4) 480p"
-      echo "  5) 360p"
-      echo "  6) audio"
-      local c
-      while :; do
-        read -rp "Choice (1-5): " c
-        case "$c" in
-        1)
-          quality="best"
-          break
-          ;;
-        2)
-          quality="1080p"
-          break
-          ;;
-        3)
-          quality="720p"
-          break
-          ;;
-        4)
-          quality="480p"
-          break
-          ;;
-        5)
-          quality="360p"
-          break
-          ;;
-        6)
-          quality="audio"
-          break
-          ;;
-        *) echo "Invalid – try again" ;;
-        esac
-      done
+      echo "YouTube setup (press Enter to skip):"
+      read -rp "Use custom yt-dlp format spec? (leave blank for simple quality): " fmt
+      if [[ -n "$fmt" ]]; then
+        yt_format_spec="$fmt"
+      else
+        echo "Select quality: best, 1080p, 720p, 480p, 360p, audio"
+        read -rp "Quality [best]: " qual
+        quality="${qual:-best}"
+        if [[ "$quality" == "audio" ]]; then
+          yt_extract_audio=true
+          read -rp "Audio format (mp3/m4a/opus) [mp3]: " af
+          yt_audio_format="${af:-mp3}"
+        fi
+      fi
+
+      read -rp "Subtitle languages (comma, e.g., en,fr): " yt_subs
+      if [[ -n "$yt_subs" ]]; then
+        read -rp "Embed subtitles? (y/n): " emb
+        [[ "$emb" =~ ^[Yy]$ ]] && yt_embed_subs=true
+      fi
+      read -rp "Embed thumbnail? (y/n): " thumb
+      [[ "$thumb" =~ ^[Yy]$ ]] && yt_embed_thumbnail=true
+      read -rp "Remux? (y/n): " rem
+      [[ "$rem" =~ ^[Yy]$ ]] && yt_remux=true
     fi
   else
-    print_success "No YouTube URLs – using default quality (best)."
+    print_success "No YouTube URLs – quality settings ignored."
   fi
 
   # --- 3. Defaults for mode/split/cookies ---
@@ -113,7 +126,15 @@ run_interactive() {
   echo "  ╭──────────── Review ───────────╮"
   echo "  │ Total URLs:     $total_count"
   echo "  │ YouTube URLs:   $yt_count"
-  echo "  │ Quality:        $quality"
+  if [[ -n "$yt_format_spec" ]]; then
+    echo "  │ Format spec:    $yt_format_spec"
+  else
+    echo "  │ Quality:        $quality"
+  fi
+  [[ "$yt_extract_audio" == "true" ]] && echo "  │ Audio only:     yes (format $yt_audio_format)"
+  [[ -n "$yt_subs" ]] && echo "  │ Subtitles:      $yt_subs (embed: $yt_embed_subs)"
+  [[ "$yt_embed_thumbnail" == "true" ]] && echo "  │ Embed thumbnail: yes"
+  [[ "$yt_remux" == "true" ]] && echo "  │ Remux:          yes"
   echo "  │ Mode:           $mode"
   echo "  │ Split size:     $split_size MB"
   echo "  │ Cookies:        $([[ -n "$cookies" ]] && echo "$cookies" || echo "none")"
@@ -132,24 +153,42 @@ run_interactive() {
   $proceed || exit 0
 
   # --- 5. Dispatch ---
-  # Build base command
   CMD=(gh workflow run download-url.yml --repo "$repo"
     --field token="$DOWNLOAD_TOKEN"
     --field urls="$urls"
     --field mode="$mode"
     --field split_size_mb="$split_size")
 
-  # Append quality-related fields
   if [[ -n "$yt_csv" ]]; then
-    local qfields
-    qfields=$(quality_to_workflow_fields "$quality")
-    if [[ -n "$qfields" ]]; then
-      # Read each line and add as array element
-      while IFS= read -r field_line; do
-        [[ -z "$field_line" ]] && continue
-        CMD+=($field_line)
+    # Format spec: custom or from quality mapping
+    if [[ -n "$yt_format_spec" ]]; then
+      CMD+=(--field yt_format_spec="$yt_format_spec")
+    elif [[ "$quality" != "best" ]]; then
+      local qfields
+      qfields=$(quality_to_workflow_fields "$quality")
+      while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        CMD+=($line)
       done <<<"$qfields"
     fi
+
+    # Audio extraction
+    if [[ "$yt_extract_audio" == "true" ]] || [[ "$quality" == "audio" ]]; then
+      CMD+=(--field yt_extract_audio=true)
+      CMD+=(--field yt_audio_format="$yt_audio_format")
+    fi
+
+    # Subtitles
+    if [[ -n "$yt_subs" ]]; then
+      CMD+=(--field yt_subs="$yt_subs")
+      if [[ "$yt_embed_subs" == "true" ]]; then
+        CMD+=(--field yt_embed_subs=true)
+      fi
+    fi
+
+    # Thumbnail & remux
+    [[ "$yt_embed_thumbnail" == "true" ]] && CMD+=(--field yt_embed_thumbnail=true)
+    [[ "$yt_remux" == "true" ]] && CMD+=(--field yt_remux=true)
   fi
 
   if [[ -n "$cookies" && -f "$cookies" ]]; then

@@ -1,178 +1,130 @@
-# 🌐 GitHub Actions Download Manager with YouTube Support
+# Download Manager with GitHub Actions
 
-A powerful, secure download manager that turns your GitHub repository into a remote download cache – now with full **YouTube / yt‑dlp** support, interactive mode, and automatic file splitting to stay within GitHub limits.
+A unified download tool that supports **any URL** (direct download) and **YouTube** via `yt-dlp`. It dispatches a GitHub Actions workflow to download, split large files, zip when appropriate, and commit to the repository.
 
-[![Trigger Download](https://github.com/tabrizkeratin/test-gh/actions/workflows/download-url.yml/badge.svg)](https://github.com/tabrizkeratin/test-gh/actions/workflows/download-url.yml)
+## Features
 
-## ✨ Features
+- Batch download multiple URLs (comma-separated or from a file)
+- YouTube support with `yt-dlp` (quality presets, custom format spec, subtitles, thumbnails, remux)
+- Automatic handling of cookies (via secret)
+- Split large files into chunks (GitHub‑friendly)
+- Automatically zip all files if total size < 100 MB and no splitting occurred
+- Interactive or command‑line mode
 
-- 📦 **Download any file** (direct links) or **YouTube videos/audio** using `yt‑dlp`
-- 🧠 **Parallel downloads** – each URL runs in its own GitHub Actions job
-- 🗜️ **Automatic splitting** of large files into chunks (< 100 MB) for GitHub
-- 🎛️ **Flexible quality selection** – presets (`best`, `1080p`, `720p`, `audio`) or raw format IDs (`135+251`)
-- 🍪 **Cookie support** – pass YouTube cookies as a secret to access private/age‑restricted content
-- 🖥️ **Interactive CLI** – simple prompts for URLs & quality; advanced mode for subtitles, thumbnails, remux
-- 🔒 **Token protection** – only users who know the secret token can trigger downloads
-- 📂 **Versioned downloads** – all files are committed to your repository (optional `downloads/` branch)
+## Prerequisites
 
-## 🚀 Quick Start
+- [GitHub CLI](https://cli.github.com/) installed and authenticated (`gh auth login`)
+- A GitHub repository with a valid `DOWNLOAD_TOKEN` secret (matching the token you provide)
+- (Optional) `gum` for nicer interactive prompts – otherwise fallback to plain `read`
 
-### 1. Fork or clone this repository
+## Setup
+
+1. Clone the repository.
+2. Set your token in `.env` (or pass via `--token` each time):
+
+   ```bash
+   echo "DOWNLOAD_TOKEN=your_secret_token" > .env
+   ```
+
+3. (Optional) Add YouTube cookies to the secret `YT_COOKIES` (as a raw Netscape‑format cookies.txt content).
+
+## Usage
+
+### Command line (non‑interactive)
 
 ```bash
-git clone https://github.com/tabrizkeratin/test-gh.git
-cd test-gh
+./scripts/download.sh [OPTIONS]
 ```
 
-### 2. Set up the download token
+#### Basic options
 
-Create a `.env` file (or export the variable):
+| Option | Description |
+|--------|-------------|
+| `-u, --urls "URL1,URL2"` | Comma‑separated URLs |
+| `-f, --urls-file FILE` | File with one URL per line |
+| `-q, --quality QUALITY` | Simple quality preset: `best`, `1080p`, `720p`, `480p`, `audio` |
+| `-m, --mode MODE` | `auto` (zip if fits), `download-full` (no zip), `download-zip` (force zip) |
+| `-s, --split-size MB` | Split files larger than this MB (0 = never split). Default 95 |
+| `-c, --cookies FILE` | Path to cookies.txt file (sent as plain text) |
+| `-t, --token TOKEN` | Override `DOWNLOAD_TOKEN` from `.env` |
+| `--check` | Test reachability of each URL before dispatch |
+| `--dry-run` | Show the `gh workflow run` command without executing |
+| `-h, --help` | Show help |
+
+#### YouTube advanced options (only applied when at least one URL is from YouTube)
+
+| Option | Description |
+|--------|-------------|
+| `--yt-format-spec SPEC` | Custom `yt-dlp` format spec (e.g., `"bestvideo[height<=720]+bestaudio"`). Overrides `--quality`. |
+| `--yt-extract-audio` | Extract audio only (implies `--yt-audio-format`) |
+| `--yt-audio-format FORMAT` | `mp3`, `m4a`, or `opus`. Default `mp3` |
+| `--yt-subs LANGS` | Comma‑separated subtitle languages, e.g., `en,fr` |
+| `--yt-embed-subs` | Embed subtitles into the output file |
+| `--yt-embed-thumbnail` | Embed thumbnail as cover art |
+| `--yt-remux` | Remux video using `ffmpeg -c copy` (improves compatibility) |
+
+**Examples:**
 
 ```bash
-DOWNLOAD_TOKEN=your-secret-token   # any strong password
+# Download a YouTube video in 720p with English subtitles embedded
+./scripts/download.sh --urls "https://youtu.be/..." --quality 720p --yt-subs en --yt-embed-subs
+
+# Custom format: best video up to 1080p, audio only, mp3 output
+./scripts/download.sh --urls "https://youtu.be/..." --yt-format-spec "bestvideo[height<=1080]+bestaudio" --yt-extract-audio --yt-audio-format mp3
+
+# Multiple URLs (mixed YouTube and direct) with thumbnail embedding
+./scripts/download.sh --urls "https://youtu.be/abc,https://example.com/file.zip" --yt-embed-thumbnail
 ```
 
-Add the **same token** as a GitHub secret in your repository:  
-`Settings → Secrets and variables → Actions → New repository secret`  
-Name: `DOWNLOAD_TOKEN` – Value: `your-secret-token`
+### Interactive mode
 
-### 3. (Optional) Add YouTube cookies
-
-If you need to download private, age‑restricted, or member‑only videos, export your browser cookies (use an extension like "Get cookies.txt") and save the whole content as a GitHub secret:
-
-Name: `YT_COOKIES` – Value: *paste the entire cookies.txt content*
-
-### 4. Run the script
+Run without any arguments:
 
 ```bash
 ./scripts/download.sh
 ```
 
-Follow the interactive prompts – enter one or more URLs, choose quality, and confirm.
+It will prompt for:
 
-Or use command‑line mode:
+- URL input method (paste manually or from file)
+- YouTube setup (simple quality preset **or** custom format spec)
+- Subtitles, thumbnail embedding, remux options
+- Confirmation before dispatching the workflow
 
-```bash
-# Download a YouTube video in 1080p with English subtitles
-./scripts/download.sh --yt-quality 1080p --yt-subs en https://youtu.be/...
+## How it works
 
-# Extract audio as MP3
-./scripts/download.sh --yt-extract-audio --yt-audio-format mp3 https://youtu.be/...
+1. The script collects and normalizes URLs.
+2. It validates the `DOWNLOAD_TOKEN` and determines the GitHub repository.
+3. It builds a `gh workflow run` command to trigger `download-url.yml`.
+4. The workflow:
+   - Installs `yt-dlp`, `bun`, `ffmpeg`, `aria2`, `jq`
+   - For each URL:
+     - If YouTube → uses `yt-dlp` with the given parameters
+     - Otherwise → uses `aria2c` for fast direct download
+   - Uploads all downloaded files as a workflow artifact
+   - The `finalize` job:
+     - Downloads all artifacts
+     - Optionally splits large files (if `split_size_mb > 0`)
+     - Zips all files if mode is `download-zip` **or** if mode is `auto` and the total size is < 100 MB and no splitting occurred
+     - Commits the `downloads/` folder back to the repository (with `[skip ci]`)
 
-# Download multiple direct links (will be zipped automatically)
-./scripts/download.sh https://example.com/file1.zip https://example.com/file2.pdf
+## Important notes
 
-# Use raw yt‑dlp format IDs
-./scripts/download.sh --yt-quality "135+251" https://youtu.be/...
-```
+- **Token security**: The token you pass must match the GitHub secret `DOWNLOAD_TOKEN`. It is transmitted as a workflow input – GitHub does not expose it in logs.
+- **Cookies**: If you set the secret `YT_COOKIES`, the workflow automatically writes it to `cookies.txt`. You can also pass a local file with `--cookies` (the content is sent as a plain text field – use with caution).
+- **Zip condition**: The workflow creates a zip only when:
+  - `mode == 'download-zip'`, **or**
+  - `mode == 'auto'` **and** the download job succeeded **and** total size < 100 MB **and** no split parts exist.
+- **Splitting**: If any file exceeds `split_size_mb`, it is split into `.part.*` files and committed individually (no zip). This avoids GitHub’s 100 MB file limit.
 
-The workflow will run on GitHub and push the downloaded files into the `downloads/` folder of your repository.
+## Troubleshooting
 
-## 📖 Detailed Usage
-
-### Interactive modes
-
-| Command | Description |
-|---------|-------------|
-| `./scripts/download.sh` | **Simple interactive** – asks for URLs and quality only. |
-| `./scripts/download.sh --advanced` | **Full interactive** – also prompts for split size, subtitles, embed thumbnail, remux, commit message. |
-| `./scripts/download.sh --help` | Show all command‑line options. |
-
-### Quality / format specifiers
-
-| Value | Effect |
-|-------|--------|
-| `best` | Best video + audio (default) |
-| `1080p` | Best video ≤1080p + best audio |
-| `720p` | Best video ≤720p + best audio |
-| `480p` | Best video ≤480p + best audio |
-| `audio` | Best audio only |
-| `135+251` | Raw yt‑dlp format IDs (e.g., video 135 + audio 251) |
-| `bestvideo[height<=1440][fps<=60]+bestaudio` | Any valid yt‑dlp format filter |
-
-> 💡 Run `yt-dlp -F <YouTube-URL>` locally to see available format IDs.
-
-### Command‑line options (non‑interactive)
-
-```
---mode <auto|download|download-zip>      default: auto
---split-size <MB>                        split files larger than this, 0=never (default 90)
---commit-msg <msg>                       custom commit message
---yt-quality <best|1080p|720p|480p|audio|height|formatID>
---yt-fps <30|60>                         limit frame rate
---yt-extract-audio                       extract audio only
---yt-audio-format <mp3|m4a|opus>         default mp3
---yt-subs <lang1,lang2>                  download subtitles (e.g. en,fr)
---yt-embed-subs                          embed subtitles into file
---yt-embed-thumbnail                     embed thumbnail
---yt-remux                               remux video for better compatibility
---advanced                               full interactive mode
---help
-```
-
-All options can also be set via `.env` file (see `.env.example`).
-
-## 🔧 How it works
-
-1. **Local script** collects URLs, quality settings, and your secret token.
-2. **Workflow dispatch** triggers a GitHub Actions workflow with all inputs.
-3. **Matrix jobs** run in parallel: each URL is processed independently.
-   - YouTube URLs → `yt-dlp` with Bun runtime + optional cookies, subs, remux.
-   - Direct links → `aria2c` for fast multi‑connection downloads.
-4. **Artifacts** from all jobs are merged into the `downloads/` folder.
-5. **Splitting & zipping** logic:
-   - Files larger than `split_size_mb` are split into `.part.aa`, `.part.ab`, …
-   - If `mode` is `download-zip` **and** no split parts exist **and** total size < 100 MB → a single `all-files.zip` is created.
-   - Otherwise individual files are committed (safe for GitHub’s 100 MB limit).
-6. **Commit & push** – all files are committed to the repository (default branch, folder `downloads/`).
-
-## 🔐 Security
-
-- **Download token** (`DOWNLOAD_TOKEN`) is required – only people who know it can start downloads.
-- **Cookie secret** (`YT_COOKIES`) is never exposed in logs or commits; it is written temporarily on the runner.
-- **Domain allowlist** (optional, set `ALLOWED_DOMAINS` in `.env`) restricts which domains can be downloaded.
-- The runner is ephemeral – everything is destroyed after the workflow finishes.
-
-## 🧪 Testing
-
-Run offline tests that do not contact the network:
-
-```bash
-./scripts/test_download.sh
-./scripts/test_domain_validation.sh
-```
-
-## 🧹 Cleaning up
-
-To remove all downloaded files from the repository history (including old commits):
-
-```bash
-./scripts/clean.sh --confirm
-```
-
-This rewrites history using `git-filter-repo`. Use with caution – coordinate with all collaborators.
-
-## 📁 Repository structure after download
-
-```
-your-repo/
-├── downloads/
-│   ├── video.mp4.part.aa
-│   ├── video.mp4.part.ab
-│   ├── all-files.zip   (only if small & zip mode)
-│   └── ...
-└── ... (other files)
-```
-
-## ❓ Troubleshooting
-
-| Problem | Solution |
-|---------|----------|
-| `Requested format is not available` | Try `--allow-unplayable-formats` (already included) or use a specific format ID from `-F`. |
-| `n challenge solving failed` | The workflow includes Bun runtime – ensure your yt‑dlp version is up‑to‑date. Check `YT_COOKIES` if the video is age‑restricted. |
-| Push rejected (file >100 MB) | The splitting logic should prevent this. If it still happens, set a lower `split_size_mb` (e.g., 80). |
-| `zip` step fails with exit code 1 | The fixed `finalize` job now skips zipping when split parts exist or total size >100 MB. |
-| Cookies not working | Export fresh cookies.txt while logged into YouTube. Make sure the secret is named exactly `YT_COOKIES`. |
+| Error | Solution |
+|-------|----------|
+| `gh not authenticated` | Run `gh auth login` |
+| `DOWNLOAD_TOKEN is not set` | Provide via `.env` or `--token` |
+| `getopt: invalid option` | The script now uses manual parsing – works everywhere |
+| `unrecognized option` | Use the exact flags shown in `--help`. The old `--yt-quality` etc. are **not** supported – use `--quality` or `--yt-format-spec` |
 
 ## 📜 License
 
