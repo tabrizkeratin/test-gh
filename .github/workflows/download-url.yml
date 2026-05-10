@@ -1,4 +1,4 @@
-name: Download URL(s) with direct & YouTube support
+name: Download YouTube URLs
 
 on:
   workflow_dispatch:
@@ -9,15 +9,18 @@ on:
         default: "url"
         type: choice
         options:
-          - url
-          - mhtml
-          - googleplay
+          - url # single video or a list of video URLs
+          - playlist_url # playlist page URL
+          - mhtml # MHTML web archive
+          - googleplay # Google Play APK
       urls:
-        description: "URLs (space or comma separated) – required for type=url / type=mhtml"
+        description: "URL(s) to download (one per line, comma‑ or newline‑separated)"
         required: false
+        type: string
       package_name:
         description: "Google Play package name – required for type=googleplay"
         required: false
+        type: string
       architecture:
         description: "Target architecture (googleplay)"
         required: false
@@ -32,66 +35,102 @@ on:
       title:
         description: "Optional title for MHTML file (no spaces/special chars)"
         required: false
-      mode:
-        description: "Mode: auto (smart zip), download-full (no zip), download-zip (force zip)"
-        default: "auto"
-      split_size_mb:
-        description: "Split files larger than this MB (0 = never split)"
-        default: "90"
-      token:
-        description: "Download token (matches repository secret)"
-        required: true
-      # YouTube-specific inputs (only used when download_type == 'url' and URL is YouTube)
+
+      # --- YouTube options ---
       yt_format_spec:
-        description: "yt-dlp format specifier"
-        default: "bestvideo+bestaudio"
+        description: "yt‑dlp format specification (e.g. bestvideo[height<=1080]+bestaudio/best)"
         required: false
+        type: string
+        default: "bestvideo[height<=1080]+bestaudio/best[height<=1080]"
       yt_extract_audio:
-        description: "Extract audio only (true/false)"
-        default: "false"
+        description: "Extract audio only (mp3)"
+        type: boolean
+        default: false
       yt_audio_format:
-        description: "Audio container when extracting audio"
+        description: "Audio format when extracting (mp3, m4a, etc.)"
+        required: false
+        type: string
         default: "mp3"
       yt_subs:
-        description: "Subtitle languages (comma‑separated)"
-        default: ""
+        description: "Download subtitles"
+        type: boolean
+        default: false
       yt_embed_subs:
-        description: "Embed subtitles into file"
-        default: "false"
+        description: "Embed subtitles into the video"
+        type: boolean
+        default: false
       yt_embed_thumbnail:
         description: "Embed thumbnail"
-        default: "false"
+        type: boolean
+        default: false
       yt_remux:
-        description: "Remux video for better compatibility"
-        default: "false"
+        description: "Force remux to mp4"
+        type: boolean
+        default: false
 
-concurrency:
-  group: download-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+      # --- new options ---
+      playlist_items:
+        description: "Playlist items (e.g. all, 3-7, 1,3,5) – leave empty for single video"
+        required: false
+        type: string
+      download_subtitles:
+        description: "Download subtitle files (separate from embedding)"
+        type: boolean
+        default: false
+      subtitle_langs:
+        description: "Subtitle language codes, comma‑separated (e.g. en,fa)"
+        required: false
+        type: string
+        default: "en"
+      embed_metadata:
+        description: "Embed thumbnail + metadata into output file"
+        type: boolean
+        default: true
+      embed_chapters:
+        description: "Embed chapter markers"
+        type: boolean
+        default: true
+      sponsorblock:
+        description: "Skip sponsor/intro/outro/selfpromo segments via SponsorBlock"
+        type: boolean
+        default: false
+      extra_args:
+        description: "Additional yt‑dlp arguments (advanced users, will be appended last)"
+        required: false
+        type: string
+      use_pot:
+        description: "Use PO‑Token server to avoid bot detection (strongly recommended)"
+        type: boolean
+        default: true
+      split_size_mb:
+        description: "Split files larger than this size (MB, 0 to disable)"
+        required: false
+        type: number
+        default: 0
+      mode:
+        description: "Output mode"
+        required: false
+        type: choice
+        options:
+          - download
+          - download-zip
+          - auto
+        default: "auto"
+
+permissions:
+  contents: write
 
 jobs:
-  validate:
+  setup-and-download:
     runs-on: ubuntu-latest
-    outputs:
-      token_valid: ${{ steps.check_token.outputs.valid }}
-    steps:
-      - name: Validate download token
-        id: check_token
-        run: |
-          if [[ "${{ github.event.inputs.token }}" == "${{ secrets.DOWNLOAD_TOKEN }}" ]]; then
-            echo "valid=true" >> $GITHUB_OUTPUT
-          else
-            echo "valid=false" >> $GITHUB_OUTPUT
-            exit 1
-          fi
+    permissions:
+      contents: write
 
-  download:
-    needs: validate
-    runs-on: ubuntu-latest
-    if: needs.validate.outputs.token_valid == 'true'
     steps:
-      - name: Checkout repository
+      - name: Clone repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create work directory
         run: mkdir -p work
@@ -104,31 +143,42 @@ jobs:
       - name: Install common tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq jq ffmpeg aria2 curl git python3 python3-pip unzip
+          sudo apt-get install -y -qq ffmpeg zip jq curl git python3 python3-pip
 
       # ------------------------------------------------------------
-      # Prepare URL list (only for type=url)
+      # PO‑Token server setup (only for YouTube)
       # ------------------------------------------------------------
-      - name: Prepare URL list
-        id: url_prep
-        if: github.event.inputs.download_type == 'url'
+      - name: Install PO‑Token server
+        if: github.event.inputs.download_type == 'url' && github.event.inputs.use_pot == 'true'
         run: |
-          INPUT_URLS="${{ github.event.inputs.urls }}"
-          URLS=$(echo "$INPUT_URLS" | tr ',' ' ' | xargs -n1 | sort -u)
-          echo "urls<<EOF" >> $GITHUB_OUTPUT
-          echo "$URLS" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          pip install -q -U "yt-dlp[default]"
+          git clone --depth 1 --branch 1.3.1 \
+            https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git \
+            /tmp/bgutil
+          cd /tmp/bgutil/server && npm ci && npx tsc
+
+      - name: Start PO Token provider server
+        if: github.event.inputs.download_type == 'url' && github.event.inputs.use_pot == 'true'
+        run: |
+          node /tmp/bgutil/server/build/main.js &
+          for i in {1..20}; do
+            if curl -sf http://localhost:4416/status >/dev/null; then
+              echo "PO Token server ready"
+              break
+            fi
+            sleep 1
+          done
 
       # ------------------------------------------------------------
       # TYPE: URL (YouTube or direct)
       # ------------------------------------------------------------
-      - name: Install yt-dlp & bun (for YouTube)
+      - name: Prepare URLs
+        id: url_prep
         if: github.event.inputs.download_type == 'url'
         run: |
-          sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
-          sudo chmod a+rx /usr/local/bin/yt-dlp
-          curl -fsSL https://bun.sh/install | bash
-          echo "$HOME/.bun/bin" >> $GITHUB_PATH
+          INPUT="${{ github.event.inputs.urls }}"
+          CLEAN="$(echo "$INPUT" | tr '\n' ',' | sed 's/,\+/\,/g' | sed 's/^,\|,$//g')"
+          echo "urls=$CLEAN" >> $GITHUB_OUTPUT
 
       - name: Prepare cookies
         id: cookies
@@ -146,11 +196,11 @@ jobs:
       - name: Download URLs
         if: github.event.inputs.download_type == 'url'
         env:
-          COOKIES_ARG: ${{ steps.cookies.outputs.cookie_file && format('--cookies-file {0}', steps.cookies.outputs.cookie_file) || '' }}
+          COOKIES_ARG: ${{ steps.cookies.outputs.cookie_file && format('--cookies {0}', steps.cookies.outputs.cookie_file) || '' }}
         run: |
           cd work
           ${{ github.workspace }}/scripts/download_urls.sh \
-            --urls ${{ steps.url_prep.outputs.urls }} \
+            --urls "${{ steps.url_prep.outputs.urls }}" \
             --format-spec "${{ github.event.inputs.yt_format_spec }}" \
             --extract-audio "${{ github.event.inputs.yt_extract_audio }}" \
             --audio-format "${{ github.event.inputs.yt_audio_format }}" \
@@ -158,8 +208,19 @@ jobs:
             --embed-subs "${{ github.event.inputs.yt_embed_subs }}" \
             --embed-thumbnail "${{ github.event.inputs.yt_embed_thumbnail }}" \
             --remux "${{ github.event.inputs.yt_remux }}" \
-            ${COOKIES_ARG}
+            ${COOKIES_ARG} \
+            --playlist-items "${{ github.event.inputs.playlist_items }}" \
+            --download-subs "${{ github.event.inputs.download_subtitles }}" \
+            --sub-langs "${{ github.event.inputs.subtitle_langs }}" \
+            --embed-metadata "${{ github.event.inputs.embed_metadata }}" \
+            --embed-chapters "${{ github.event.inputs.embed_chapters }}" \
+            --sponsorblock "${{ github.event.inputs.sponsorblock }}" \
+            --extra-args "${{ github.event.inputs.extra_args }}" \
+            ${{ github.event.inputs.use_pot == 'true' && '--po-token' || '' }}
 
+      # ------------------------------------------------------------
+      # TYPE: MHTML
+      # ------------------------------------------------------------
       - name: Install pyppeteer
         if: github.event.inputs.download_type == 'mhtml'
         run: python3 -m pip install pyppeteer
@@ -173,9 +234,9 @@ jobs:
             "${{ github.event.inputs.title }}"
 
       # ------------------------------------------------------------
-      # TYPE: Google Play APK
+      # TYPE: Google Play
       # ------------------------------------------------------------
-      - name: Download APK from Google Play (into work/)
+      - name: Download APK from Google Play
         if: github.event.inputs.download_type == 'googleplay'
         run: |
           ${{ github.workspace }}/scripts/download_googleplay.sh \
@@ -184,18 +245,8 @@ jobs:
             --merge "${{ github.event.inputs.merge_splits }}" \
             --output "${{ github.workspace }}/work"
 
-      # ------------------------------------------------------------
-      # Upload the entire work/ directory
-      # ------------------------------------------------------------
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: downloaded-files
-          path: work/
-          retention-days: 1
-
   finalize:
-    needs: download
+    needs: setup-and-download
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -203,27 +254,23 @@ jobs:
         with:
           persist-credentials: true
           fetch-depth: 0
-
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-
       - name: Create timestamped subdirectory
         id: timestamp
         run: |
           TS=$(date +'%Y%m%d_%H%M%S')
           echo "subdir=downloads/$TS" >> $GITHUB_OUTPUT
           mkdir -p "downloads/$TS"
-
       - name: Move files to timestamped subdirectory
         run: |
           TARGET="${{ steps.timestamp.outputs.subdir }}"
-          find artifacts -type f -exec cp {} "$TARGET/" \;
+          find artifacts -type f -exec cp -t "$TARGET/" {} +
           if [ -z "$(ls -A "$TARGET" 2>/dev/null)" ]; then
             touch "$TARGET/.placeholder"
           fi
-
       - name: Split large files (if split_size_mb > 0)
         if: github.event.inputs.split_size_mb != '0'
         run: |
@@ -240,7 +287,6 @@ jobs:
               rm "$f"
             fi
           done
-
       - name: Zip files if appropriate
         if: github.event.inputs.mode == 'download-zip' || (github.event.inputs.mode == 'auto' && needs.download.result == 'success')
         run: |
@@ -263,7 +309,6 @@ jobs:
           echo "Zipping $file_count files (total ${total_size} bytes)"
           zip -r all-files.zip .
           find . -type f ! -name "all-files.zip" ! -name ".placeholder" -delete
-
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
