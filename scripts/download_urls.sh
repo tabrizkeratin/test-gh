@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Usage: download_urls.sh --urls "url1 url2" --format-spec "bestvideo+bestaudio" --extract-audio true --audio-format mp3 --audio-lang original --subs en --embed-subs true --embed-thumbnail true --remux true [--cookies-file file]
+# Usage: download_urls.sh --urls "url1 url2" --format-spec "bestvideo+bestaudio" --extract-audio true --audio-format mp3 --subs en --embed-subs true --embed-thumbnail true --remux true [--cookies-file file]
 
 URLS=()
 FORMAT_SPEC="bestvideo+bestaudio"
 EXTRACT_AUDIO=false
 AUDIO_FORMAT="mp3"
-AUDIO_LANG="original"
 SUBS=""
 EMBED_SUBS=""
 EMBED_THUMBNAIL=false
@@ -33,10 +32,6 @@ while [[ $# -gt 0 ]]; do
     ;;
   --audio-format)
     AUDIO_FORMAT="$2"
-    shift 2
-    ;;
-  --audio-lang)
-    AUDIO_LANG="$2"
     shift 2
     ;;
   --subs)
@@ -81,7 +76,6 @@ for url in "${URLS[@]}"; do
   if echo "$url" | grep -qE '(youtube\.com/watch\?v=|youtu\.be/)'; then
     CMD="yt-dlp --no-progress --js-runtimes bun --remote-components ejs:npm"
     [[ -n "$COOKIES_FILE" ]] && CMD="$CMD --cookies $COOKIES_FILE"
-    [[ -n "$AUDIO_LANG" ]] && CMD="$CMD --audio-lang $AUDIO_LANG"
     CMD="$CMD -f '$FORMAT_SPEC'"
     [[ "$EXTRACT_AUDIO" == "true" ]] && CMD="$CMD --extract-audio --audio-format $AUDIO_FORMAT"
     [[ -n "$SUBS" ]] && CMD="$CMD --write-subs --sub-langs $SUBS"

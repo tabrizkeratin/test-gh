@@ -162,7 +162,6 @@ jobs:
             --format-spec "${{ github.event.inputs.yt_format_spec }}" \
             --extract-audio "${{ github.event.inputs.yt_extract_audio }}" \
             --audio-format "${{ github.event.inputs.yt_audio_format }}" \
-            --audio-lang "original" \
             --subs "${{ github.event.inputs.yt_subs }}" \
             $EMBED_SUBS_ARG \
             --embed-thumbnail "${{ github.event.inputs.yt_embed_thumbnail }}" \

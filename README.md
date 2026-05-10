@@ -63,7 +63,7 @@ A unified download tool that supports **any URL** (direct download) and **YouTub
 | `--yt-embed-thumbnail` | Embed thumbnail as cover art |
 | `--yt-remux` | Remux video using `ffmpeg -c copy` (improves compatibility) |
 
-**Default behavior:** Subtitles are embedded by default when selected. Audio language defaults to `original` (the video's original language).
+**Default behavior:** Subtitles are embedded by default when selected.
 
 **Examples:**
 
