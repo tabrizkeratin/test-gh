@@ -143,6 +143,17 @@ jobs:
             echo "has_cookies=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: Debug cookies
+        if: github.event.inputs.download_type == 'url'
+        run: |
+          echo "has_cookies: ${{ steps.cookies.outputs.has_cookies }}"
+          if [[ -f "work/cookies.txt" ]]; then
+            echo "cookies.txt exists, size: $(stat -c%s work/cookies.txt) bytes"
+            echo "first 100 chars: $(head -c 100 work/cookies.txt)"
+          else
+            echo "cookies.txt NOT found"
+          fi
+
       - name: Download URLs
         if: github.event.inputs.download_type == 'url'
         run: |
