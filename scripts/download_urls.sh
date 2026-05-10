@@ -3,7 +3,8 @@ set -euo pipefail
 
 # Usage: download_urls.sh --urls "url1 url2" --format-spec "bestvideo+bestaudio" --extract-audio true --audio-format mp3 --subs en --embed-subs true --embed-thumbnail true --remux true [--cookies-file file]
 
-set -x
+echo "DEBUG: All args: $@"
+echo "DEBUG: Number of args: $#"
 
 URLS=()
 FORMAT_SPEC="bestvideo+bestaudio"
