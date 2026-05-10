@@ -9,9 +9,9 @@ source "${SCRIPT_DIR}/lib/quality_map.sh"
 run_noninteractive() {
   # Defaults
   local urls="" urls_file="" quality="best"
-  local mode="${DEFAULT_MODE:-auto}"
-  local split_size="${DEFAULT_SPLIT_MB:-95}"
-  local cookies="" dry_run=false enable_check=false
+  local mode="auto"
+  local split_size=0
+  local dry_run=false enable_check=false
 
   # Type selection
   local download_type="url"
@@ -19,7 +19,10 @@ run_noninteractive() {
 
   # YouTube advanced options
   local yt_format_spec="" yt_extract_audio=false yt_audio_format="mp3"
-  local yt_subs="" yt_embed_subs=false yt_embed_thumbnail=false yt_remux=false
+  local yt_subs=false yt_embed_subs=false yt_embed_thumbnail=false yt_remux=false
+  local playlist_items="" download_subtitles=false subtitle_langs="en"
+  local embed_metadata=true embed_chapters=true sponsorblock=false
+  local extra_args="" use_pot=true
 
   # Manual argument parsing
   while [[ $# -gt 0 ]]; do
@@ -42,14 +45,6 @@ run_noninteractive() {
       ;;
     -s | --split-size)
       split_size="$2"
-      shift 2
-      ;;
-    -c | --cookies)
-      cookies="$2"
-      shift 2
-      ;;
-    -t | --token)
-      DOWNLOAD_TOKEN="$2"
       shift 2
       ;;
     --type)
@@ -99,6 +94,42 @@ run_noninteractive() {
     --yt-remux)
       yt_remux=true
       shift
+      ;;
+    --playlist-items)
+      playlist_items="$2"
+      shift 2
+      ;;
+    --download-subs)
+      download_subtitles=true
+      shift
+      ;;
+    --sub-langs)
+      subtitle_langs="$2"
+      shift 2
+      ;;
+    --embed-metadata)
+      embed_metadata=true
+      shift
+      ;;
+    --embed-chapters)
+      embed_chapters=true
+      shift
+      ;;
+    --sponsorblock)
+      sponsorblock=true
+      shift
+      ;;
+    --use-pot)
+      use_pot=true
+      shift
+      ;;
+    --no-pot)
+      use_pot=false
+      shift
+      ;;
+    --extra-args)
+      extra_args="$2"
+      shift 2
       ;;
     --check)
       enable_check=true
@@ -188,7 +219,6 @@ run_noninteractive() {
   local repo
   repo=$(get_repo)
   CMD=(gh workflow run download-url.yml --repo "$repo"
-    --field token="$DOWNLOAD_TOKEN"
     --field download_type="$download_type"
     --field mode="$mode"
     --field split_size_mb="$split_size")
@@ -212,12 +242,18 @@ run_noninteractive() {
         CMD+=(--field yt_extract_audio=true)
         CMD+=(--field yt_audio_format="$yt_audio_format")
       fi
-      if [[ -n "$yt_subs" ]]; then
-        CMD+=(--field yt_subs="$yt_subs")
-        [[ "$yt_embed_subs" == "true" ]] && CMD+=(--field yt_embed_subs=true)
-      fi
+      [[ "$yt_subs" == "true" ]] && CMD+=(--field yt_subs=true)
+      [[ "$yt_embed_subs" == "true" ]] && CMD+=(--field yt_embed_subs=true)
       [[ "$yt_embed_thumbnail" == "true" ]] && CMD+=(--field yt_embed_thumbnail=true)
       [[ "$yt_remux" == "true" ]] && CMD+=(--field yt_remux=true)
+      [[ -n "$playlist_items" ]] && CMD+=(--field playlist_items="$playlist_items")
+      [[ "$download_subtitles" == "true" ]] && CMD+=(--field download_subtitles=true)
+      [[ -n "$subtitle_langs" ]] && CMD+=(--field subtitle_langs="$subtitle_langs")
+      [[ "$embed_metadata" == "true" ]] && CMD+=(--field embed_metadata=true)
+      [[ "$embed_chapters" == "true" ]] && CMD+=(--field embed_chapters=true)
+      [[ "$sponsorblock" == "true" ]] && CMD+=(--field sponsorblock=true)
+      [[ "$use_pot" == "true" ]] && CMD+=(--field use_pot=true)
+      [[ -n "$extra_args" ]] && CMD+=(--field extra_args="$extra_args")
     fi
     ;;
   mhtml)
@@ -230,10 +266,6 @@ run_noninteractive() {
     CMD+=(--field merge_splits="$merge_splits")
     ;;
   esac
-
-  if [[ -n "$cookies" && -f "$cookies" ]]; then
-    CMD+=(--field cookies="$(cat "$cookies")")
-  fi
 
   if $dry_run; then
     echo "Dry run – would execute:"
@@ -251,16 +283,14 @@ usage() {
 Usage: ./scripts/download.sh [OPTIONS]
 
 General options:
-  -t, --token TOKEN             DOWNLOAD_TOKEN (overrides .env)
-  -m, --mode MODE               Mode: auto, download-full, download-zip
-  -s, --split-size MB           Split size in MB (0 = never split, default 95)
-  -c, --cookies FILE            Path to cookies.txt
+  -m, --mode MODE               Mode: auto, download, download-zip (default: auto)
+  -s, --split-size MB           Split size in MB (0 = never split, default: 0)
       --check                   Enable URL reachability checks
       --dry-run                 Print command without executing
   -h, --help                    This message
 
 Type selection (default: url):
-  --type TYPE                   One of: url, mhtml, googleplay
+  --type TYPE                   One of: url, playlist_url, mhtml, googleplay
 
 For --type url:
   -u, --urls "URL1,URL2"        Comma-separated URLs
@@ -269,10 +299,19 @@ For --type url:
   --yt-format-spec SPEC         Overrides --quality
   --yt-extract-audio            Extract audio only
   --yt-audio-format FORMAT      mp3, m4a, opus (default mp3)
-  --yt-subs LANGS               Subtitle languages (en,fr)
+  --yt-subs                     Download subtitles
   --yt-embed-subs               Embed subtitles
   --yt-embed-thumbnail          Embed thumbnail
   --yt-remux                    Remux video
+  --playlist-items ITEMS        Playlist items (e.g., 3-7, all, 1,3,5)
+  --download-subs               Download separate subtitle files
+  --sub-langs LANGS             Subtitle languages (comma-separated, default: en)
+  --embed-metadata              Embed thumbnail + metadata (default: true)
+  --embed-chapters              Embed chapter markers (default: true)
+  --sponsorblock                Skip sponsor/intro/outro segments
+  --use-pot                     Use PO-Token server (default: true)
+  --no-pot                      Disable PO-Token server
+  --extra-args "ARGS"          Extra yt-dlp arguments
 
 For --type mhtml:
   -u, --urls URL                Single URL to archive

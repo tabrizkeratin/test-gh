@@ -36,12 +36,7 @@ get_repo() {
   }
 }
 
-validate_token() {
-  if [[ -z "${DOWNLOAD_TOKEN:-}" ]]; then
-    print_error "DOWNLOAD_TOKEN is not set. Use .env or --token."
-    exit 1
-  fi
-}
+validate_token() { }
 
 # Spinner utility
 spinner() {

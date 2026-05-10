@@ -41,9 +41,8 @@ run_interactive() {
   fi
 
   # --- Common defaults ---
-  local mode="${DEFAULT_MODE:-auto}"
-  local split_size="${DEFAULT_SPLIT_MB:-95}"
-  local cookies="${DEFAULT_COOKIES:-}"
+  local mode="auto"
+  local split_size=0
 
   # --- Variables for specific types ---
   local urls="" title="" package_name="" architecture="arm64" merge_splits=true
@@ -204,8 +203,6 @@ run_interactive() {
   esac
   echo "  │ Mode:           $mode"
   echo "  │ Split size:     $split_size MB"
-  echo "  │ Cookies:        $([[ -n "$cookies" ]] && echo "$cookies" || echo "none")"
-  echo "  │ Token:          ********"
   echo "  ╰────────────────────────────────╯"
   echo ""
 
@@ -221,7 +218,6 @@ run_interactive() {
 
   # --- Build and dispatch ---
   CMD=(gh workflow run download-url.yml --repo "$repo"
-    --field token="$DOWNLOAD_TOKEN"
     --field download_type="$download_type"
     --field mode="$mode"
     --field split_size_mb="$split_size")
@@ -262,10 +258,6 @@ run_interactive() {
     CMD+=(--field merge_splits="$merge_splits")
     ;;
   esac
-
-  if [[ -n "$cookies" && -f "$cookies" ]]; then
-    CMD+=(--field cookies="$(cat "$cookies")")
-  fi
 
   print_success "Dispatching..."
   "${CMD[@]}" &
