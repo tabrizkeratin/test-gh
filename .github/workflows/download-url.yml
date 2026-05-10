@@ -138,17 +138,19 @@ jobs:
         run: |
           if [[ -n "$COOKIES_TXT" ]]; then
             echo "$COOKIES_TXT" > work/cookies.txt
-            echo "cookie_file=cookies.txt" >> $GITHUB_OUTPUT
+            echo "has_cookies=true" >> $GITHUB_OUTPUT
           else
-            echo "cookie_file=" >> $GITHUB_OUTPUT
+            echo "has_cookies=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Download URLs
         if: github.event.inputs.download_type == 'url'
-        env:
-          COOKIES_ARG: ${{ steps.cookies.outputs.cookie_file && format('--cookies-file {0}', steps.cookies.outputs.cookie_file) || '' }}
         run: |
           cd work
+          COOKIES_ARGS=""
+          if [[ "${{ steps.cookies.outputs.has_cookies }}" == "true" ]]; then
+            COOKIES_ARGS="--cookies-file cookies.txt"
+          fi
           ${{ github.workspace }}/scripts/download_urls.sh \
             --urls ${{ steps.url_prep.outputs.urls }} \
             --format-spec "${{ github.event.inputs.yt_format_spec }}" \
@@ -158,7 +160,7 @@ jobs:
             --embed-subs "${{ github.event.inputs.yt_embed_subs }}" \
             --embed-thumbnail "${{ github.event.inputs.yt_embed_thumbnail }}" \
             --remux "${{ github.event.inputs.yt_remux }}" \
-            ${COOKIES_ARG}
+            $COOKIES_ARGS
 
       - name: Install pyppeteer
         if: github.event.inputs.download_type == 'mhtml'

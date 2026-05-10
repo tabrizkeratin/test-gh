@@ -77,6 +77,7 @@ for url in "${URLS[@]}"; do
     [[ "$EMBED_SUBS" == "true" ]] && CMD="$CMD --embed-subs"
     [[ "$EMBED_THUMBNAIL" == "true" ]] && CMD="$CMD --embed-thumbnail"
     eval $CMD "$url"
+    sleep 5
     if [[ "$REMUX" == "true" ]]; then
       for f in *.mp4 *.webm *.mkv; do
         [ -f "$f" ] && ffmpeg -i "$f" -c copy "fixed_$f" -y && mv "fixed_$f" "$f"
