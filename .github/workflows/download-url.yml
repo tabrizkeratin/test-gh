@@ -153,8 +153,6 @@ jobs:
           fi
           # Convert multiline URLs to space-separated single line
           URL_LIST=$(echo "${{ steps.url_prep.outputs.urls }}" | tr '\n' ' ' | xargs)
-          echo "URL_LIST: $URL_LIST"
-          echo "COOKIES_ARGS: $COOKIES_ARGS"
           ${{ github.workspace }}/scripts/download_urls.sh \
             --urls $URL_LIST \
             --format-spec "${{ github.event.inputs.yt_format_spec }}" \
