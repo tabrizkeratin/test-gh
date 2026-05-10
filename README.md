@@ -59,21 +59,26 @@ A unified download tool that supports **any URL** (direct download) and **YouTub
 | `--yt-extract-audio` | Extract audio only (implies `--yt-audio-format`) |
 | `--yt-audio-format FORMAT` | `mp3`, `m4a`, or `opus`. Default `mp3` |
 | `--yt-subs LANGS` | Comma‑separated subtitle languages, e.g., `en,fr` |
-| `--yt-embed-subs` | Embed subtitles into the output file |
+| `--yt-embed-subs` | Embed subtitles into the output file (default: true when `--yt-subs` is set) |
 | `--yt-embed-thumbnail` | Embed thumbnail as cover art |
 | `--yt-remux` | Remux video using `ffmpeg -c copy` (improves compatibility) |
+
+**Default behavior:** Subtitles are embedded by default when selected. Audio language defaults to `original` (the video's original language).
 
 **Examples:**
 
 ```bash
-# Download a YouTube video in 720p with English subtitles embedded
-./scripts/download.sh --urls "https://youtu.be/..." --quality 720p --yt-subs en --yt-embed-subs
+# Download a YouTube video in 720p with English subtitles (embedded by default)
+./scripts/download.sh --urls "https://youtu.be/..." --quality 720p --yt-subs en
 
 # Custom format: best video up to 1080p, audio only, mp3 output
 ./scripts/download.sh --urls "https://youtu.be/..." --yt-format-spec "bestvideo[height<=1080]+bestaudio" --yt-extract-audio --yt-audio-format mp3
 
 # Multiple URLs (mixed YouTube and direct) with thumbnail embedding
 ./scripts/download.sh --urls "https://youtu.be/abc,https://example.com/file.zip" --yt-embed-thumbnail
+
+# Disable subtitle embedding (download separate .vtt files instead)
+./scripts/download.sh --urls "https://youtu.be/..." --yt-subs en --yt-embed-subs false
 ```
 
 ### Interactive mode
