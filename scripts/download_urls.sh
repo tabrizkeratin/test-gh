@@ -3,6 +3,8 @@ set -euo pipefail
 
 # Usage: download_urls.sh --urls "url1 url2" --format-spec "bestvideo+bestaudio" --extract-audio true --audio-format mp3 --subs en --embed-subs true --embed-thumbnail true --remux true [--cookies-file file]
 
+set -x
+
 URLS=()
 FORMAT_SPEC="bestvideo+bestaudio"
 EXTRACT_AUDIO=false
@@ -68,6 +70,7 @@ fi
 
 for url in "${URLS[@]}"; do
   echo "Downloading: $url"
+  echo "COOKIES_FILE='$COOKIES_FILE'"
   if echo "$url" | grep -qE '(youtube\.com/watch\?v=|youtu\.be/)'; then
     CMD="yt-dlp --no-progress --js-runtimes bun --remote-components ejs:npm"
     [[ -n "$COOKIES_FILE" ]] && CMD="$CMD --cookies $COOKIES_FILE"
