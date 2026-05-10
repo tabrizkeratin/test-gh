@@ -9,7 +9,7 @@ EXTRACT_AUDIO=false
 AUDIO_FORMAT="mp3"
 AUDIO_LANG="original"
 SUBS=""
-EMBED_SUBS=false
+EMBED_SUBS=""
 EMBED_THUMBNAIL=false
 REMUX=false
 COOKIES_FILE=""
@@ -62,9 +62,14 @@ while [[ $# -gt 0 ]]; do
   *)
     echo "Unknown option: $1"
     exit 1
-    ;;
-  esac
+;;
+esac
 done
+
+# Default embed-subs to true if subs are selected and not explicitly disabled
+if [[ -n "$SUBS" && -z "$EMBED_SUBS" ]]; then
+  EMBED_SUBS=true
+fi
 
 if [[ ${#URLS[@]} -eq 0 ]]; then
   echo "Error: No URLs provided"

@@ -153,6 +153,10 @@ jobs:
           fi
           # Convert multiline URLs to space-separated single line
           URL_LIST=$(echo "${{ steps.url_prep.outputs.urls }}" | tr '\n' ' ' | xargs)
+          EMBED_SUBS_ARG=""
+          if [[ "${{ github.event.inputs.yt_embed_subs }}" == "true" ]]; then
+            EMBED_SUBS_ARG="--embed-subs true"
+          fi
           ${{ github.workspace }}/scripts/download_urls.sh \
             --urls $URL_LIST \
             --format-spec "${{ github.event.inputs.yt_format_spec }}" \
@@ -160,7 +164,7 @@ jobs:
             --audio-format "${{ github.event.inputs.yt_audio_format }}" \
             --audio-lang "original" \
             --subs "${{ github.event.inputs.yt_subs }}" \
-            --embed-subs "${{ github.event.inputs.yt_embed_subs }}" \
+            $EMBED_SUBS_ARG \
             --embed-thumbnail "${{ github.event.inputs.yt_embed_thumbnail }}" \
             --remux "${{ github.event.inputs.yt_remux }}" \
             $COOKIES_ARGS
