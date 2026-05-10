@@ -95,7 +95,7 @@ jobs:
 
       - name: Create work directory
         run: mkdir -p work
-      
+
       - name: Make scripts executable
         run: |
           chmod +x scripts/*.sh 2>/dev/null || true
@@ -130,21 +130,23 @@ jobs:
           curl -fsSL https://bun.sh/install | bash
           echo "$HOME/.bun/bin" >> $GITHUB_PATH
 
-      - name: Prepare cookies (if secret exists)
-        if: github.event.inputs.download_type == 'url'
+      - name: Prepare cookies
         id: cookies
+        if: github.event.inputs.download_type == 'url'
         env:
           COOKIES_TXT: ${{ secrets.YT_COOKIES }}
         run: |
           if [[ -n "$COOKIES_TXT" ]]; then
             echo "$COOKIES_TXT" > work/cookies.txt
-            echo "cookie_file=work/cookies.txt" >> $GITHUB_OUTPUT
+            echo "cookie_file=cookies.txt" >> $GITHUB_OUTPUT
           else
             echo "cookie_file=" >> $GITHUB_OUTPUT
           fi
 
       - name: Download URLs
         if: github.event.inputs.download_type == 'url'
+        env:
+          COOKIES_ARG: ${{ steps.cookies.outputs.cookie_file && format('--cookies-file {0}', steps.cookies.outputs.cookie_file) || '' }}
         run: |
           cd work
           ${{ github.workspace }}/scripts/download_urls.sh \
