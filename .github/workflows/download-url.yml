@@ -288,7 +288,7 @@ jobs:
             fi
           done
       - name: Zip files if appropriate
-        if: github.event.inputs.mode == 'download-zip' || (github.event.inputs.mode == 'auto' && needs.download.result == 'success')
+        if: github.event.inputs.mode == 'download-zip' || (github.event.inputs.mode == 'auto' && needs.setup-and-download.result == 'success')
         run: |
           TARGET="${{ steps.timestamp.outputs.subdir }}"
           cd "$TARGET"

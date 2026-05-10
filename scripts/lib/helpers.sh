@@ -36,7 +36,7 @@ get_repo() {
   }
 }
 
-validate_token() { }
+validate_token() { :; }
 
 # Spinner utility
 spinner() {
