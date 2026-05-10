@@ -201,6 +201,7 @@ jobs:
           name: downloaded-files
           path: work/
           retention-days: 1
+          patternsExclude: 'cookies.txt'
 
   finalize:
     needs: download
