@@ -195,13 +195,15 @@ jobs:
       # ------------------------------------------------------------
       # Upload the entire work/ directory
       # ------------------------------------------------------------
+      - name: Remove cookies before upload
+        run: rm -f work/cookies.txt
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: downloaded-files
           path: work/
           retention-days: 1
-          patternsExclude: 'cookies.txt'
 
   finalize:
     needs: download

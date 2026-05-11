@@ -185,6 +185,7 @@ run_noninteractive() {
   fi
 
   # Build gh workflow command
+  check_gh_async_wait
   local repo
   repo=$(get_repo)
   CMD=(gh workflow run download-url.yml --repo "$repo"

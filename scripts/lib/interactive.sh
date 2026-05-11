@@ -7,10 +7,11 @@ source "${SCRIPT_DIR}/lib/input_parsing.sh"
 source "${SCRIPT_DIR}/lib/quality_map.sh"
 
 run_interactive() {
-  check_gh
+  check_gh_async &
+  local bg_pid=$!
+
   validate_token
   local repo
-  repo=$(get_repo)
 
   print_header
 
@@ -220,6 +221,9 @@ run_interactive() {
   $proceed || exit 0
 
   # --- Build and dispatch ---
+  check_gh_async_wait $bg_pid
+  repo=$(get_repo)
+
   CMD=(gh workflow run download-url.yml --repo "$repo"
     --field token="$DOWNLOAD_TOKEN"
     --field download_type="$download_type"
