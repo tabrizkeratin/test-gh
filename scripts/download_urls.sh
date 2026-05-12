@@ -103,7 +103,10 @@ for url in "${URLS[@]}"; do
     sleep 5
     if [[ "$REMUX" == "true" ]]; then
       for f in *.mp4 *.webm *.mkv; do
-        [ -f "$f" ] && ffmpeg -i "$f" -c copy "fixed_$f" -y && mv "fixed_$f" "$f"
+        [ -f "$f" ] || continue
+        if ffmpeg -i "$f" -c copy -f null - 2>&1 | grep -q "Invalid"; then
+          ffmpeg -i "$f" -c copy "fixed_$f" -y && mv "fixed_$f" "$f"
+        fi
       done
     fi
   else
