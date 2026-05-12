@@ -4,7 +4,7 @@ set -euo pipefail
 # Delete all completed runs of the download and clean workflows.
 # Requires `gh` CLI authenticated and `jq`.
 
-workflows=("download-url.yml" "clean-downloads.yml")
+workflows=("dispatch.yml" "clean-downloads.yml")
 
 for wf in "${workflows[@]}"; do
   echo "Deleting runs of workflow: $wf"

@@ -202,11 +202,12 @@ run_noninteractive() {
   check_gh_async_wait
   local repo
   repo=$(get_repo)
-  CMD=(gh workflow run download-url.yml --repo "$repo"
+  CMD=(gh workflow run dispatch.yml --repo "$repo"
     --field token="$DOWNLOAD_TOKEN"
     --field download_type="$download_type"
     --field mode="$mode"
-    --field split_size_mb="$split_size")
+    --field split_size_mb="$split_size"
+    --field parallel=false)
 
   case "$download_type" in
   url)
