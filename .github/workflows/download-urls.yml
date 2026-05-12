@@ -86,6 +86,8 @@ jobs:
     outputs:
       artifact_name: downloaded-files-${{ github.run_id }}
     steps:
+      - uses: actions/checkout@v4
+
       - name: Install tools
         uses: ./.github/actions/install-tools
 
