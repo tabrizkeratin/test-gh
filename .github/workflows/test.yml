@@ -1,0 +1,53 @@
+name: Tests
+
+on:
+  push:
+    paths:
+      - '.github/workflows/**'
+      - '.github/actions/**'
+      - 'scripts/**'
+      - 'tests/**'
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - '.github/actions/**'
+      - 'scripts/**'
+      - 'tests/**'
+
+jobs:
+  shell-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Python YAML
+        run: pip install pyyaml 2>/dev/null || pip3 install pyyaml
+
+      - name: Run workflow structure tests
+        run: |
+          chmod +x tests/shell/*.sh
+          bash tests/shell/test_workflows.sh
+
+      - name: Run URL/parsing logic tests
+        run: bash tests/shell/test_download_urls.sh
+
+      - name: Run script lint
+        run: |
+          for f in scripts/*.sh; do
+            bash -n "$f" || { echo "Syntax error in $f"; exit 1; }
+          done
+          echo "All shell scripts pass syntax check"
+
+  validate-workflow-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install yamllint
+        run: pip install yamllint
+
+      - name: Lint workflow YAML files
+        run: |
+          yamllint --no-warnings .github/workflows/ .github/actions/

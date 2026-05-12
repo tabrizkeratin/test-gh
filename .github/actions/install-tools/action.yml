@@ -1,0 +1,53 @@
+name: Install tools
+description: Installs and caches yt-dlp, bun, aria2, and other tools
+
+runs:
+  using: composite
+  steps:
+    - name: Cache yt-dlp
+      id: cache-yt-dlp
+      uses: actions/cache@v4
+      with:
+        path: ~/.local/bin/yt-dlp
+        key: yt-dlp-20260101
+
+    - name: Cache bun
+      id: cache-bun
+      uses: actions/cache@v4
+      with:
+        path: ~/.bun
+        key: bun-1
+
+    - name: Cache aria2
+      id: cache-aria2
+      uses: actions/cache@v4
+      with:
+        path: /usr/local/bin/aria2c
+        key: aria2-1
+
+    - name: Install aria2
+      if: steps.cache-aria2.outputs.cache-hit != 'true'
+      shell: bash
+      run: sudo apt-get install -y -qq aria2
+
+    - name: Install yt-dlp
+      if: steps.cache-yt-dlp.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
+        sudo chmod a+rx /usr/local/bin/yt-dlp
+        mkdir -p ~/.local/bin
+        cp /usr/local/bin/yt-dlp ~/.local/bin/yt-dlp
+
+    - name: Install bun
+      if: steps.cache-bun.outputs.cache-hit != 'true'
+      shell: bash
+      run: curl -fsSL https://bun.sh/install | bash
+
+    - name: Add bun to PATH
+      shell: bash
+      run: echo "$HOME/.bun/bin" >> $GITHUB_PATH
+
+    - name: Install common tools
+      shell: bash
+      run: sudo apt-get update -qq && sudo apt-get install -y -qq jq ffmpeg curl git python3 python3-pip unzip

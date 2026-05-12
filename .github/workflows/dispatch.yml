@@ -1,0 +1,180 @@
+name: Download Dispatcher
+
+on:
+  workflow_dispatch:
+    inputs:
+      download_type:
+        description: "Type of download"
+        required: true
+        default: "url"
+        type: choice
+        options:
+          - url
+          - mhtml
+          - googleplay
+      urls:
+        description: "URLs (one per line, or space/comma separated)"
+        required: false
+      package_name:
+        description: "Google Play package name – required for type=googleplay"
+        required: false
+      architecture:
+        description: "Target architecture (googleplay)"
+        required: false
+        default: "arm64"
+        type: choice
+        options: ["arm64", "armv7"]
+      merge_splits:
+        description: "Merge split APKs (googleplay)"
+        required: false
+        type: boolean
+        default: true
+      title:
+        description: "Optional title for MHTML file (no spaces/special chars)"
+        required: false
+      mode:
+        description: "Mode: auto (smart zip), download-full (no zip), download-zip (force zip)"
+        default: "auto"
+      split_size_mb:
+        description: "Split files larger than this MB (0 = never split)"
+        default: "90"
+      token:
+        description: "Download token (matches repository secret)"
+        required: true
+      parallel:
+        description: "Fork sub-jobs for parallel downloads (true/false)"
+        default: "false"
+      # YouTube-specific inputs
+      yt_format_spec:
+        description: "yt-dlp format specifier"
+        default: "bestvideo+bestaudio"
+        required: false
+      yt_extract_audio:
+        description: "Extract audio only (true/false)"
+        default: "false"
+      yt_audio_format:
+        description: "Audio container when extracting audio"
+        default: "mp3"
+      yt_subs:
+        description: "Subtitle languages (comma‑separated)"
+        default: ""
+      yt_embed_subs:
+        description: "Embed subtitles into file"
+        default: "false"
+      yt_embed_thumbnail:
+        description: "Embed thumbnail"
+        default: "false"
+      yt_remux:
+        description: "Remux video for better compatibility"
+        default: "false"
+      yt_playlist_start:
+        description: "Start downloading playlist from item N"
+        default: ""
+      yt_playlist_end:
+        description: "End downloading playlist at item N"
+        default: ""
+      yt_max_playlist_size:
+        description: "Limit playlist to N items"
+        default: ""
+
+concurrency:
+  group: download-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      token_valid: ${{ steps.check_token.outputs.valid }}
+    steps:
+      - name: Validate download token
+        id: check_token
+        run: |
+          if [[ "${{ github.event.inputs.token }}" == "${{ secrets.DOWNLOAD_TOKEN }}" ]]; then
+            echo "valid=true" >> $GITHUB_OUTPUT
+          else
+            echo "valid=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+  prepare:
+    needs: validate
+    runs-on: ubuntu-latest
+    if: needs.validate.outputs.token_valid == 'true'
+    outputs:
+      url_list: ${{ steps.parse_urls.outputs.url_list }}
+      url_count: ${{ steps.parse_urls.outputs.url_count }}
+      is_youtube: ${{ steps.check_youtube.outputs.is_youtube }}
+    steps:
+      - name: Parse URLs
+        id: parse_urls
+        run: |
+          INPUT_URLS="${{ github.event.inputs.urls }}"
+          URLS=$(echo "$INPUT_URLS" | tr ',\n' ' ' | xargs -n1 | sort -u | grep -v '^$')
+          echo "url_list<<EOF" >> $GITHUB_OUTPUT
+          echo "$URLS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "url_count=$(echo "$URLS" | wc -l)" >> $GITHUB_OUTPUT
+
+      - name: Check if URLs are YouTube
+        id: check_youtube
+        run: |
+          if echo "${{ steps.parse_urls.outputs.url_list }}" | grep -qE '(youtube\.com|youtu\.be)'; then
+            echo "is_youtube=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_youtube=false" >> $GITHUB_OUTPUT
+          fi
+
+  dispatch-sequential:
+    needs: prepare
+    if: github.event.inputs.parallel != 'true'
+    uses: ./.github/workflows/download-urls.yml
+    with:
+      download_type: ${{ github.event.inputs.download_type }}
+      urls: ${{ needs.prepare.outputs.url_list }}
+      package_name: ${{ github.event.inputs.package_name }}
+      architecture: ${{ github.event.inputs.architecture }}
+      merge_splits: ${{ github.event.inputs.merge_splits }}
+      title: ${{ github.event.inputs.title }}
+      mode: ${{ github.event.inputs.mode }}
+      split_size_mb: ${{ github.event.inputs.split_size_mb }}
+      parallel: "false"
+      yt_format_spec: ${{ github.event.inputs.yt_format_spec }}
+      yt_extract_audio: ${{ github.event.inputs.yt_extract_audio }}
+      yt_audio_format: ${{ github.event.inputs.yt_audio_format }}
+      yt_subs: ${{ github.event.inputs.yt_subs }}
+      yt_embed_subs: ${{ github.event.inputs.yt_embed_subs }}
+      yt_embed_thumbnail: ${{ github.event.inputs.yt_embed_thumbnail }}
+      yt_remux: ${{ github.event.inputs.yt_remux }}
+      yt_playlist_start: ${{ github.event.inputs.yt_playlist_start }}
+      yt_playlist_end: ${{ github.event.inputs.yt_playlist_end }}
+      yt_max_playlist_size: ${{ github.event.inputs.yt_max_playlist_size }}
+
+  dispatch-parallel:
+    needs: prepare
+    if: github.event.inputs.parallel == 'true'
+    strategy:
+      matrix:
+        url: ${{ fromJson(needs.prepare.outputs.url_list) }}
+      fail-fast: false
+    uses: ./.github/workflows/download-urls.yml
+    with:
+      download_type: ${{ github.event.inputs.download_type }}
+      urls: ${{ matrix.url }}
+      package_name: ${{ github.event.inputs.package_name }}
+      architecture: ${{ github.event.inputs.architecture }}
+      merge_splits: ${{ github.event.inputs.merge_splits }}
+      title: ${{ github.event.inputs.title }}
+      mode: ${{ github.event.inputs.mode }}
+      split_size_mb: ${{ github.event.inputs.split_size_mb }}
+      parallel: "true"
+      yt_format_spec: ${{ github.event.inputs.yt_format_spec }}
+      yt_extract_audio: ${{ github.event.inputs.yt_extract_audio }}
+      yt_audio_format: ${{ github.event.inputs.yt_audio_format }}
+      yt_subs: ${{ github.event.inputs.yt_subs }}
+      yt_embed_subs: ${{ github.event.inputs.yt_embed_subs }}
+      yt_embed_thumbnail: ${{ github.event.inputs.yt_embed_thumbnail }}
+      yt_remux: ${{ github.event.inputs.yt_remux }}
+      yt_playlist_start: ${{ github.event.inputs.yt_playlist_start }}
+      yt_playlist_end: ${{ github.event.inputs.yt_playlist_end }}
+      yt_max_playlist_size: ${{ github.event.inputs.yt_max_playlist_size }}

@@ -1,0 +1,167 @@
+name: Download URLs
+
+on:
+  workflow_call:
+    inputs:
+      download_type:
+        description: "Type of download"
+        required: true
+        type: string
+      urls:
+        description: "URLs (space or newline separated)"
+        required: true
+        type: string
+      package_name:
+        required: false
+        type: string
+        default: ""
+      architecture:
+        required: false
+        type: string
+        default: "arm64"
+      merge_splits:
+        required: false
+        type: boolean
+        default: true
+      title:
+        required: false
+        type: string
+        default: ""
+      mode:
+        required: false
+        type: string
+        default: "auto"
+      split_size_mb:
+        required: false
+        type: string
+        default: "90"
+      parallel:
+        required: false
+        type: string
+        default: "false"
+      yt_format_spec:
+        required: false
+        type: string
+        default: "bestvideo+bestaudio"
+      yt_extract_audio:
+        required: false
+        type: string
+        default: "false"
+      yt_audio_format:
+        required: false
+        type: string
+        default: "mp3"
+      yt_subs:
+        required: false
+        type: string
+        default: ""
+      yt_embed_subs:
+        required: false
+        type: string
+        default: "false"
+      yt_embed_thumbnail:
+        required: false
+        type: string
+        default: "false"
+      yt_remux:
+        required: false
+        type: string
+        default: "false"
+      yt_playlist_start:
+        required: false
+        type: string
+        default: ""
+      yt_playlist_end:
+        required: false
+        type: string
+        default: ""
+      yt_max_playlist_size:
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_name: downloaded-files-${{ github.run_id }}
+    steps:
+      - name: Install tools
+        uses: ./.github/actions/install-tools
+
+      - name: Create work directory
+        run: mkdir -p work
+
+      - name: Make scripts executable
+        run: |
+          chmod +x scripts/*.sh 2>/dev/null || true
+          chmod +x scripts/*.py 2>/dev/null || true
+
+      - name: Download URLs
+        if: inputs.download_type == 'url'
+        run: |
+          cd work
+          COOKIES_FILE=""
+          if [[ -n "${{ secrets.YT_COOKIES }}" ]]; then
+            echo "${{ secrets.YT_COOKIES }}" > cookies.txt
+            COOKIES_FILE="--cookies-file cookies.txt"
+          fi
+          URLS=$(echo "${{ inputs.urls }}" | tr ',\n' ' ' | xargs)
+          ${{ github.workspace }}/scripts/download_urls.sh \
+            --urls $URLS \
+            --format-spec "${{ inputs.yt_format_spec }}" \
+            --extract-audio "${{ inputs.yt_extract_audio }}" \
+            --audio-format "${{ inputs.yt_audio_format }}" \
+            --subs "${{ inputs.yt_subs }}" \
+            --embed-subs "${{ inputs.yt_embed_subs }}" \
+            --embed-thumbnail "${{ inputs.yt_embed_thumbnail }}" \
+            --remux "${{ inputs.yt_remux }}" \
+            --playlist-start "${{ inputs.yt_playlist_start }}" \
+            --playlist-end "${{ inputs.yt_playlist_end }}" \
+            --max-playlist-size "${{ inputs.yt_max_playlist_size }}" \
+            $COOKIES_FILE
+
+      - name: Download MHTML
+        if: inputs.download_type == 'mhtml'
+        run: |
+          cd work
+          python3 -m pip install pyppeteer
+          python3 ${{ github.workspace }}/scripts/save_mhtml.py \
+            "${{ inputs.urls }}" \
+            "${{ inputs.title }}"
+
+      - name: Download APK from Google Play
+        if: inputs.download_type == 'googleplay'
+        run: |
+          ${{ github.workspace }}/scripts/download_googleplay.sh \
+            --package "${{ inputs.package_name }}" \
+            --arch "${{ inputs.architecture }}" \
+            --merge "${{ inputs.merge_splits }}" \
+            --output "${{ github.workspace }}/work"
+
+      - name: Compress work directory
+        id: compress
+        run: |
+          if [ -z "$(ls -A work 2>/dev/null)" ]; then
+            echo "empty=true" >> $GITHUB_OUTPUT
+          else
+            echo "empty=false" >> $GITHUB_OUTPUT
+            cd work
+            zip -r ../work.zip .
+          fi
+
+      - name: Upload artifact
+        if: steps.compress.outputs.empty != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: downloaded-files-${{ github.run_id }}
+          path: work.zip
+          retention-days: 1
+
+  finalize:
+    needs: download
+    uses: ./.github/actions/finalize-download
+    with:
+      artifact-name: ${{ needs.download.outputs.artifact_name }}
+      mode: ${{ inputs.mode }}
+      split-size-mb: ${{ inputs.split_size_mb }}
