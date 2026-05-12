@@ -87,7 +87,7 @@ jobs:
       artifact_name: downloaded-files-${{ github.run_id }}
     steps:
       - name: Install tools
-        uses: ./.github/actions/install-tools@${{ github.ref }}
+        uses: ./.github/actions/install-tools
 
       - name: Create work directory
         run: mkdir -p work
@@ -160,7 +160,7 @@ jobs:
 
   finalize:
     needs: download
-    uses: ./.github/actions/finalize-download@${{ github.ref }}
+    uses: ./.github/actions/finalize-download
     with:
       artifact-name: ${{ needs.download.outputs.artifact_name }}
       mode: ${{ inputs.mode }}
