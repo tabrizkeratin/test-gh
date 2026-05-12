@@ -128,7 +128,7 @@ jobs:
   dispatch-sequential:
     needs: prepare
     if: github.event.inputs.parallel != 'true'
-    uses: ./.github/workflows/download-urls.yml
+    uses: ./.github/workflows/download-urls.yml@16644e68d566147f1957a75bd3cf7d57870b3deb
     with:
       download_type: ${{ github.event.inputs.download_type }}
       urls: ${{ needs.prepare.outputs.url_list }}
@@ -157,7 +157,7 @@ jobs:
       matrix:
         url: ${{ fromJson(needs.prepare.outputs.url_list) }}
       fail-fast: false
-    uses: ./.github/workflows/download-urls.yml
+    uses: ./.github/workflows/download-urls.yml@16644e68d566147f1957a75bd3cf7d57870b3deb
     with:
       download_type: ${{ github.event.inputs.download_type }}
       urls: ${{ matrix.url }}
