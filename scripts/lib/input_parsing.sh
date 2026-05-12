@@ -55,7 +55,7 @@ is_youtube_url() {
 # Check if a YouTube URL is a playlist URL
 is_youtube_playlist_url() {
   local url="$1"
-  [[ "$url" =~ [?&]list= ]]
+  [[ "$url" == *"?list="* ]] || [[ "$url" == *"&list="* ]]
 }
 
 # Return comma‑separated YouTube URLs only (deduplicated)
