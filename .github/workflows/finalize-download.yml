@@ -1,0 +1,121 @@
+name: Finalize Download
+
+on:
+  workflow_call:
+    inputs:
+      artifact-name:
+        required: false
+        type: string
+        default: downloaded-files
+      mode:
+        required: false
+        type: string
+        default: auto
+      split-size-mb:
+        required: false
+        type: string
+        default: "90"
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: artifacts
+
+      - name: Check if artifact has files
+        id: check-files
+        shell: bash
+        run: |
+          if [ -z "$(ls -A artifacts 2>/dev/null)" ]; then
+            echo "empty=true" >> $GITHUB_OUTPUT
+          else
+            echo "empty=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Early exit if no files
+        if: steps.check-files.outputs.empty == 'true'
+        shell: bash
+        run: echo "No files to commit. Skipping finalize." && exit 0
+
+      - name: Shallow clone repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 1
+          sparse-checkout: |
+            downloads
+          sparse-checkout-cone-mode: false
+
+      - name: Create timestamped subdirectory
+        id: timestamp
+        shell: bash
+        run: |
+          TS=$(date +'%Y%m%d_%H%M%S')
+          echo "subdir=downloads/$TS" >> $GITHUB_OUTPUT
+          mkdir -p "downloads/$TS"
+
+      - name: Move files to timestamped subdirectory
+        shell: bash
+        run: |
+          TARGET="${{ steps.timestamp.outputs.subdir }}"
+          find artifacts -type f -exec cp {} "$TARGET/" \;
+
+      - name: Split large files
+        if: inputs.split-size-mb != '0'
+        shell: bash
+        run: |
+          SPLIT_SIZE=${{ inputs.split-size-mb }}
+          TARGET="${{ steps.timestamp.outputs.subdir }}"
+          cd "$TARGET"
+          for f in *; do
+            if [[ -f "$f" ]] && [[ $(stat -c%s "$f") -gt $((SPLIT_SIZE * 1048576)) ]]; then
+              split -b ${SPLIT_SIZE}M "$f" "${f}.part."
+              rm "$f"
+            fi
+          done
+
+      - name: Zip files if appropriate
+        if: inputs.mode == 'download-zip' || inputs.mode == 'auto'
+        shell: bash
+        run: |
+          TARGET="${{ steps.timestamp.outputs.subdir }}"
+          cd "$TARGET"
+          if ls *.part.* 1> /dev/null 2>&1; then
+            echo "Split parts detected. Not zipping."
+            exit 0
+          fi
+          file_count=$(find . -maxdepth 1 -type f | wc -l)
+          total_size=$(du -sb . | cut -f1)
+          if [[ "${{ inputs.mode }}" == "auto" && $file_count -le 1 ]]; then
+            echo "Only one file in auto mode – skipping zip."
+            exit 0
+          fi
+          if [[ $total_size -gt 104857600 ]]; then
+            echo "Total size exceeds 100MB. Skipping zip."
+            exit 0
+          fi
+          echo "Zipping $file_count files (total ${total_size} bytes)"
+          zip -r all-files.zip .
+          find . -type f ! -name "all-files.zip" -delete
+
+      - name: Configure git
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Commit and push
+        shell: bash
+        run: |
+          TIMESTAMP="${{ steps.timestamp.outputs.subdir }}"
+          git add downloads/
+          if ! git diff --cached --quiet; then
+            git commit -m "Add downloaded files from run at ${TIMESTAMP#downloads/} [skip ci]"
+            git push
+          else
+            echo "No changes to commit."
+          fi

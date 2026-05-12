@@ -160,7 +160,7 @@ jobs:
 
   finalize:
     needs: download
-    uses: ./.github/actions/finalize-download
+    uses: ./.github/workflows/finalize-download.yml
     with:
       artifact-name: ${{ needs.download.outputs.artifact_name }}
       mode: ${{ inputs.mode }}
