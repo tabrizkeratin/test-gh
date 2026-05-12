@@ -134,7 +134,7 @@ jobs:
       urls: ${{ needs.prepare.outputs.url_list }}
       package_name: ${{ github.event.inputs.package_name }}
       architecture: ${{ github.event.inputs.architecture }}
-      merge_splits: ${{ github.event.inputs.merge_splits }}
+      merge_splits: ${{ github.event.inputs.merge_splits == 'true' }}
       title: ${{ github.event.inputs.title }}
       mode: ${{ github.event.inputs.mode }}
       split_size_mb: ${{ github.event.inputs.split_size_mb }}
@@ -163,7 +163,7 @@ jobs:
       urls: ${{ matrix.url }}
       package_name: ${{ github.event.inputs.package_name }}
       architecture: ${{ github.event.inputs.architecture }}
-      merge_splits: ${{ github.event.inputs.merge_splits }}
+      merge_splits: ${{ github.event.inputs.merge_splits == 'true' }}
       title: ${{ github.event.inputs.title }}
       mode: ${{ github.event.inputs.mode }}
       split_size_mb: ${{ github.event.inputs.split_size_mb }}
