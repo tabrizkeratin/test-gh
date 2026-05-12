@@ -64,6 +64,15 @@ on:
       yt_remux:
         description: "Remux video for better compatibility"
         default: "false"
+      yt_playlist_start:
+        description: "Start downloading playlist from item N"
+        default: ""
+      yt_playlist_end:
+        description: "End downloading playlist at item N"
+        default: ""
+      yt_max_playlist_size:
+        description: "Limit playlist to N items"
+        default: ""
 
 concurrency:
   group: download-${{ github.workflow }}-${{ github.ref }}
@@ -157,6 +166,10 @@ jobs:
           if [[ "${{ github.event.inputs.yt_embed_subs }}" == "true" ]]; then
             EMBED_SUBS_ARG="--embed-subs true"
           fi
+          PLAYLIST_ARGS=""
+          [[ -n "${{ github.event.inputs.yt_playlist_start }}" ]] && PLAYLIST_ARGS="$PLAYLIST_ARGS --playlist-start ${{ github.event.inputs.yt_playlist_start }}"
+          [[ -n "${{ github.event.inputs.yt_playlist_end }}" ]] && PLAYLIST_ARGS="$PLAYLIST_ARGS --playlist-end ${{ github.event.inputs.yt_playlist_end }}"
+          [[ -n "${{ github.event.inputs.yt_max_playlist_size }}" ]] && PLAYLIST_ARGS="$PLAYLIST_ARGS --max-playlist-size ${{ github.event.inputs.yt_max_playlist_size }}"
           ${{ github.workspace }}/scripts/download_urls.sh \
             --urls $URL_LIST \
             --format-spec "${{ github.event.inputs.yt_format_spec }}" \
@@ -166,6 +179,7 @@ jobs:
             $EMBED_SUBS_ARG \
             --embed-thumbnail "${{ github.event.inputs.yt_embed_thumbnail }}" \
             --remux "${{ github.event.inputs.yt_remux }}" \
+            $PLAYLIST_ARGS \
             $COOKIES_ARGS
 
       - name: Install pyppeteer

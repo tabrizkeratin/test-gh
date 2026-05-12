@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Usage: download_urls.sh --urls "url1 url2" --format-spec "bestvideo+bestaudio" --extract-audio true --audio-format mp3 --subs en --embed-subs true --embed-thumbnail true --remux true [--cookies-file file]
+# Usage: download_urls.sh --urls "url1 url2" --format-spec "bestvideo+bestaudio" --extract-audio true --audio-format mp3 --subs en --embed-subs true --embed-thumbnail true --remux true [--cookies-file file] [--playlist-start N] [--playlist-end N] [--max-playlist-size N]
 
 URLS=()
 FORMAT_SPEC="bestvideo+bestaudio"
@@ -12,6 +12,9 @@ EMBED_SUBS=""
 EMBED_THUMBNAIL=false
 REMUX=false
 COOKIES_FILE=""
+PLAYLIST_START=""
+PLAYLIST_END=""
+MAX_PLAYLIST_SIZE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -54,6 +57,18 @@ while [[ $# -gt 0 ]]; do
     COOKIES_FILE="$2"
     shift 2
     ;;
+  --playlist-start)
+    PLAYLIST_START="$2"
+    shift 2
+    ;;
+  --playlist-end)
+    PLAYLIST_END="$2"
+    shift 2
+    ;;
+  --max-playlist-size)
+    MAX_PLAYLIST_SIZE="$2"
+    shift 2
+    ;;
   *)
     echo "Unknown option: $1"
     exit 1
@@ -73,7 +88,7 @@ fi
 
 for url in "${URLS[@]}"; do
   echo "Downloading: $url"
-  if echo "$url" | grep -qE '(youtube\.com/watch\?v=|youtu\.be/)'; then
+  if echo "$url" | grep -qE '(youtube\.com|youtu\.be)'; then
     CMD="yt-dlp --no-progress --js-runtimes bun --remote-components ejs:npm"
     [[ -n "$COOKIES_FILE" ]] && CMD="$CMD --cookies $COOKIES_FILE"
     CMD="$CMD -f '$FORMAT_SPEC'"
@@ -81,6 +96,9 @@ for url in "${URLS[@]}"; do
     [[ -n "$SUBS" ]] && CMD="$CMD --write-subs --sub-langs $SUBS"
     [[ "$EMBED_SUBS" == "true" ]] && CMD="$CMD --embed-subs"
     [[ "$EMBED_THUMBNAIL" == "true" ]] && CMD="$CMD --embed-thumbnail"
+    [[ -n "$PLAYLIST_START" ]] && CMD="$CMD --playlist-start $PLAYLIST_START"
+    [[ -n "$PLAYLIST_END" ]] && CMD="$CMD --playlist-end $PLAYLIST_END"
+    [[ -n "$MAX_PLAYLIST_SIZE" ]] && CMD="$CMD --max-playlist-size $MAX_PLAYLIST_SIZE"
     eval $CMD "$url"
     sleep 5
     if [[ "$REMUX" == "true" ]]; then

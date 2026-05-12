@@ -52,6 +52,12 @@ is_youtube_url() {
   [[ "$url" =~ ^(https?://)?(www\.)?(youtube\.com|youtu\.be)/ ]]
 }
 
+# Check if a YouTube URL is a playlist URL
+is_youtube_playlist_url() {
+  local url="$1"
+  [[ "$url" =~ [?&]list= ]]
+}
+
 # Return comma‑separated YouTube URLs only (deduplicated)
 extract_youtube_urls() {
   local joined_csv="$1"

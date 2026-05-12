@@ -20,6 +20,8 @@ run_noninteractive() {
   # YouTube advanced options
   local yt_format_spec="" yt_extract_audio=false yt_audio_format="mp3"
   local yt_subs="" yt_embed_subs=false yt_embed_thumbnail=false yt_remux=false
+  # Playlist options
+  local yt_playlist_start="" yt_playlist_end="" yt_max_playlist_size=""
 
   # Manual argument parsing
   while [[ $# -gt 0 ]]; do
@@ -99,6 +101,18 @@ run_noninteractive() {
     --yt-remux)
       yt_remux=true
       shift
+      ;;
+    --yt-playlist-start)
+      yt_playlist_start="$2"
+      shift 2
+      ;;
+    --yt-playlist-end)
+      yt_playlist_end="$2"
+      shift 2
+      ;;
+    --yt-max-playlist-size)
+      yt_max_playlist_size="$2"
+      shift 2
       ;;
     --check)
       enable_check=true
@@ -198,7 +212,7 @@ run_noninteractive() {
   url)
     CMD+=(--field urls="$final_urls")
     # YouTube fields (only if YouTube URLs present)
-    if echo "$final_urls" | grep -qE '(youtube\.com/watch\?v=|youtu\.be/)'; then
+    if echo "$final_urls" | grep -qE '(youtube\.com|youtu\.be)'; then
       if [[ -n "$yt_format_spec" ]]; then
         CMD+=(--field yt_format_spec="$yt_format_spec")
       elif [[ "$quality" != "best" ]]; then
@@ -219,6 +233,9 @@ run_noninteractive() {
       fi
       [[ "$yt_embed_thumbnail" == "true" ]] && CMD+=(--field yt_embed_thumbnail=true)
       [[ "$yt_remux" == "true" ]] && CMD+=(--field yt_remux=true)
+      [[ -n "$yt_playlist_start" ]] && CMD+=(--field yt_playlist_start="$yt_playlist_start")
+      [[ -n "$yt_playlist_end" ]] && CMD+=(--field yt_playlist_end="$yt_playlist_end")
+      [[ -n "$yt_max_playlist_size" ]] && CMD+=(--field yt_max_playlist_size="$yt_max_playlist_size")
     fi
     ;;
   mhtml)
@@ -274,6 +291,9 @@ For --type url:
   --yt-embed-subs               Embed subtitles
   --yt-embed-thumbnail          Embed thumbnail
   --yt-remux                    Remux video
+  --yt-playlist-start N         Start downloading from item N
+  --yt-playlist-end N           End downloading at item N
+  --yt-max-playlist-size N      Limit playlist to N items
 
 For --type mhtml:
   -u, --urls URL                Single URL to archive
