@@ -105,12 +105,14 @@ echo "Force pushing to $REMOTE $CURRENT_BRANCH..."
 git push --force "$REMOTE" "$CURRENT_BRANCH"
 # git-filter-repo removes the 'origin' remote; re-add it
 git remote add origin "$REMOTE" 2>/dev/null || git remote set-url origin "$REMOTE"
+git branch --set-upstream-to="origin/$CURRENT_BRANCH" "$CURRENT_BRANCH" 2>/dev/null || true
 
 # 3. Purge workflow runs if requested
 if [[ "$PURGE_RUNS" == "true" ]]; then
   echo ""
   echo "Purging completed workflow runs..."
   if [[ -f "$SCRIPT_DIR/clean-runs.sh" ]]; then
+    chmod +x "$SCRIPT_DIR/clean-runs.sh"
     "$SCRIPT_DIR/clean-runs.sh"
   else
     echo "Warning: clean-runs.sh not found. Skipping."
