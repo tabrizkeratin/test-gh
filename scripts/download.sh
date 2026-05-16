@@ -8,7 +8,7 @@ export SCRIPT_DIR REPO_ROOT
 
 # Sensible defaults
 export DEFAULT_MODE="auto"
-export DEFAULT_SPLIT_MB=95
+export DEFAULT_SPLIT_MB=90
 export DEFAULT_COOKIES=""
 
 # Load .env if exists
