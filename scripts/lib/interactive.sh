@@ -87,6 +87,7 @@ run_interactive() {
     local quality="best"
     local yt_format_spec="" yt_extract_audio=false yt_audio_format="mp3"
     local yt_subs="" yt_embed_subs=false yt_embed_thumbnail=false yt_remux=false
+    local yt_playlist_start="" yt_playlist_end="" yt_max_playlist_size=""
 
     local yt_csv
     yt_csv=$(extract_youtube_urls "$urls")
@@ -113,6 +114,14 @@ run_interactive() {
         fi
         gum confirm "Embed thumbnail?" && yt_embed_thumbnail=true
         gum confirm "Remux video (ffmpeg copy)?" && yt_remux=true
+
+        if is_youtube_playlist_url "$yt_csv"; then
+          if gum confirm "Configure playlist range?"; then
+            yt_playlist_start=$(gum input --placeholder "Start from item (blank = from beginning)" --value="")
+            yt_playlist_end=$(gum input --placeholder "End at item (blank = to end)" --value="")
+            yt_max_playlist_size=$(gum input --placeholder "Max items (blank = unlimited)" --value="")
+          fi
+        fi
       else
         echo ""
         echo "YouTube setup (press Enter to skip):"
@@ -138,6 +147,15 @@ run_interactive() {
         [[ "$thumb" =~ ^[Yy]$ ]] && yt_embed_thumbnail=true
         read -rp "Remux? (y/n): " rem
         [[ "$rem" =~ ^[Yy]$ ]] && yt_remux=true
+
+        if echo "$yt_csv" | grep -qE '(\?list=|&list=)'; then
+          read -rp "Configure playlist range? (y/n): " pl
+          if [[ "$pl" =~ ^[Yy]$ ]]; then
+            read -rp "Start from item (blank = from beginning): " yt_playlist_start
+            read -rp "End at item (blank = to end): " yt_playlist_end
+            read -rp "Max items (blank = unlimited): " yt_max_playlist_size
+          fi
+        fi
       fi
     else
       print_success "No YouTube URLs – quality settings ignored."
@@ -192,6 +210,9 @@ run_interactive() {
     [[ -n "$yt_subs" ]] && echo "  │ Subtitles:      $yt_subs (embed: $yt_embed_subs)"
     [[ "$yt_embed_thumbnail" == "true" ]] && echo "  │ Embed thumbnail: yes"
     [[ "$yt_remux" == "true" ]] && echo "  │ Remux:          yes"
+    [[ -n "$yt_playlist_start" ]] && echo "  │ Playlist start: $yt_playlist_start"
+    [[ -n "$yt_playlist_end" ]] && echo "  │ Playlist end:   $yt_playlist_end"
+    [[ -n "$yt_max_playlist_size" ]] && echo "  │ Playlist max:   $yt_max_playlist_size"
     ;;
   mhtml)
     echo "  │ URL:            $urls"
@@ -254,6 +275,9 @@ run_interactive() {
       fi
       [[ "$yt_embed_thumbnail" == "true" ]] && CMD+=(--field yt_embed_thumbnail=true)
       [[ "$yt_remux" == "true" ]] && CMD+=(--field yt_remux=true)
+      [[ -n "$yt_playlist_start" ]] && CMD+=(--field yt_playlist_start="$yt_playlist_start")
+      [[ -n "$yt_playlist_end" ]] && CMD+=(--field yt_playlist_end="$yt_playlist_end")
+      [[ -n "$yt_max_playlist_size" ]] && CMD+=(--field yt_max_playlist_size="$yt_max_playlist_size")
     fi
     ;;
   mhtml)
